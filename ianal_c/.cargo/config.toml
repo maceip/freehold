@@ -1,0 +1,8 @@
+[build]
+target-dir = "target"
+
+[target.bpfel-unknown-none]
+rustflags = ["-C", "link-arg=--btf"]
+
+[alias]
+xtask = "run --package xtask --"

@@ -1,0 +1,30 @@
+# Build artifacts
+target/
+*.o
+*.so
+*.a
+
+# Cargo
+Cargo.lock
+!specular/Cargo.lock
+!ianal_c/Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Certificates (keep templates, ignore generated)
+*.pem
+*.key
+!*.example.pem
+!*.example.key

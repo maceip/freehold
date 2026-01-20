@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["xtask", "ianal-c", "ianal-c-ebpf"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

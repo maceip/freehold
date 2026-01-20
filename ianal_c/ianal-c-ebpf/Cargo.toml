@@ -1,0 +1,13 @@
+[package]
+name = "ianal-c-ebpf"
+version = "0.1.0"
+edition = "2021"
+
+# This is a C-based eBPF project. The source is in src/main.bpf.c
+# and is compiled with clang via `cargo xtask build-ebpf`.
+# No Rust compilation occurs for this crate.
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
