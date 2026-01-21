@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>carebears</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    body {
+      background: #0a0a0a;
+      font-family: 'JetBrains Mono', monospace;
+      touch-action: pan-y;
+    }
+
+    body.no-scroll {
+      overflow: hidden;
+      height: 100vh;
+      height: 100dvh;
+      touch-action: none;
+    }
+
+    .container {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      position: fixed;
+      top: 0;
+      left: 0;
+      contain: layout style paint;
+    }
+
+    /* Swirl vortex background */
+    .vortex-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: -1;
+      opacity: 0;
+      transition: opacity 1s ease;
+      overflow: hidden;
+    }
+
+    .vortex-bg.active {
+      opacity: 1;
+    }
+
+    .vortex-ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 3px solid;
+      opacity: 0.6;
+      animation: vortexSpin 8s linear infinite;
+    }
+
+    @keyframes vortexSpin {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+
+    /* Floating stars */
+    .floating-star {
+      position: fixed;
+      font-size: 24px;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 40;
+      transition: opacity 0.5s ease;
+    }
+
+    .floating-star.visible {
+      opacity: 1;
+      animation: floatStar 3s ease-in-out infinite;
+    }
+
+    @keyframes floatStar {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-15px) rotate(15deg); }
+    }
+
+    .scroll-content {
+      height: 500vh;
+      height: 500dvh;
+      pointer-events: none;
+      display: none;
+    }
+
+    .scroll-content.active {
+      display: block;
+    }
+
+    .letter {
+      position: absolute;
+      font-size: 18px;
+      line-height: 1;
+      font-weight: bold;
+      color: #9370db;
+      text-shadow: 0 0 10px rgba(147, 112, 219, 0.5);
+      cursor: text;
+      user-select: text;
+      -webkit-user-select: text;
+      transform: translate3d(0, 0, 0);
+      will-change: transform, opacity;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      contain: layout style;
+    }
+
+    .hint {
+      position: absolute;
+      bottom: 40px;
+      bottom: calc(40px + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      color: #444;
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: lowercase;
+      opacity: 0.8;
+      transition: opacity 0.8s ease;
+      pointer-events: none;
+    }
+
+    .hint.hidden {
+      opacity: 0;
+    }
+
+    .scroll-hint {
+      position: fixed;
+      bottom: 40px;
+      bottom: calc(40px + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      color: #444;
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: lowercase;
+      opacity: 0;
+      transition: opacity 1s ease;
+      pointer-events: none;
+    }
+
+    .scroll-hint.visible {
+      opacity: 0.8;
+    }
+
+    .page-marker {
+      position: fixed;
+      right: 20px;
+      right: calc(20px + env(safe-area-inset-right));
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      z-index: 100;
+    }
+
+    .page-marker.visible {
+      opacity: 1;
+    }
+
+    .page-marker span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #333;
+      transition: background 0.3s ease, transform 0.2s ease;
+    }
+
+    .page-marker span.active {
+      background: #9370db;
+      transform: scale(1.3);
+    }
+
+    /* ASCII Cloud */
+    .ascii-cloud {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      line-height: 1.1;
+      color: rgba(255, 255, 255, 0.95);
+      text-shadow: 0 0 20px rgba(150, 200, 255, 0.8), 0 0 40px rgba(150, 200, 255, 0.4);
+      white-space: pre;
+      pointer-events: none;
+      z-index: 30;
+      opacity: 0;
+      bottom: -200px;
+      transition: opacity 1s ease, bottom 1.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .ascii-cloud.visible {
+      opacity: 1;
+      bottom: 5%;
+    }
+
+    .ascii-cloud.rise {
+      bottom: 35%;
+    }
+
+    /* Sleep Z's */
+    .zzz-container {
+      position: fixed;
+      pointer-events: none;
+      z-index: 60;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+
+    .zzz-container.visible {
+      opacity: 1;
+    }
+
+    .zzz {
+      position: absolute;
+      font-size: 28px;
+      font-weight: bold;
+      color: #ffa500;
+      text-shadow: 0 0 10px rgba(255, 165, 0, 0.8), 2px 2px 0 #333;
+      animation: floatZ 2s ease-in-out infinite;
+    }
+
+    .zzz:nth-child(1) { font-size: 32px; animation-delay: 0s; }
+    .zzz:nth-child(2) { font-size: 26px; animation-delay: 0.3s; left: 25px; top: -20px; }
+    .zzz:nth-child(3) { font-size: 20px; animation-delay: 0.6s; left: 45px; top: -35px; }
+
+    @keyframes floatZ {
+      0%, 100% { transform: translateY(0) rotate(-5deg); opacity: 1; }
+      50% { transform: translateY(-10px) rotate(5deg); opacity: 0.8; }
+    }
+
+    /* WebGL shader canvas */
+    #shaderCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 50;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    #shaderCanvas.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* Mobile optimizations */
+    @media (max-width: 768px) {
+      .letter {
+        font-size: 14px;
+      }
+
+      .ascii-cloud {
+        font-size: 10px;
+      }
+
+      .hint, .scroll-hint {
+        font-size: 11px;
+        bottom: 30px;
+        bottom: calc(30px + env(safe-area-inset-bottom));
+      }
+
+      .page-marker {
+        right: 12px;
+        gap: 6px;
+      }
+
+      .page-marker span {
+        width: 5px;
+        height: 5px;
+      }
+
+      .floating-star {
+        font-size: 18px;
+      }
+
+      .zzz { font-size: 22px; }
+      .zzz:nth-child(1) { font-size: 26px; }
+      .zzz:nth-child(2) { font-size: 20px; }
+      .zzz:nth-child(3) { font-size: 16px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .letter, .vortex-ring, .floating-star, .zzz {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="no-scroll">
+  <!-- Vortex background -->
+  <div class="vortex-bg" id="vortexBg"></div>
+
+  <div class="container" id="container">
+    <div class="hint" id="hint">touch to wake the bear</div>
+  </div>
+
+  <!-- ASCII Cloud -->
+  <div class="ascii-cloud" id="asciiCloud">
+                        .::::::::::::::::::::::::::.
+                   .::::::'''               ''':::::::::.
+               .::::''                               ''::::.
+            .::::'                                       '::::.
+          .:::'                                             ':::.
+        .:::'                                                 ':::.
+       .:::'                                                    ':::.
+      .:::'                                                       :::.
+     .:::                                                          :::.
+    .:::                                                            :::.
+   .:::                                                              :::.
+  .:::                                                                :::.
+  :::                                                                  :::
+ :::                                                                    :::
+ :::                                                                    :::
+.:::                                                                    :::.
+:::                                                                      :::
+:::                                                                      :::</div>
+
+  <!-- Sleep Z's -->
+  <div class="zzz-container" id="zzzContainer">
+    <span class="zzz">Z</span>
+    <span class="zzz">z</span>
+    <span class="zzz">z</span>
+  </div>
+
+  <canvas id="shaderCanvas"></canvas>
+  <div class="scroll-content" id="scrollContent"></div>
+  <div class="scroll-hint" id="scrollHint">scroll to explore</div>
+  <div class="page-marker" id="pageMarker">
+    <span class="active"></span>
+    <span></span>
+    <span></span>
+    <span></span>
+    <span></span>
+  </div>
+
+  <script>
+    // ===== WEBGL WAVE DISTORTION SHADER =====
+    const vertexShaderSource = `
+      attribute vec2 a_position;
+      attribute vec2 a_texCoord;
+      varying vec2 v_texCoord;
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord;
+      }
+    `;
+
+    const fragmentShaderSource = `
+      precision highp float;
+
+      uniform sampler2D u_texture;
+      uniform vec2 u_resolution;
+      uniform vec2 u_origin;
+      uniform float u_time;
+      uniform float u_amplitude;
+      uniform float u_angularFrequency;
+      uniform float u_decayRate;
+      uniform float u_waveSpeed;
+      uniform float u_maxRadius;
+      uniform float u_tintRatio;
+
+      varying vec2 v_texCoord;
+
+      vec2 cubicBezierPoint(vec2 p0, vec2 p1, vec2 p2, vec2 p3, float t) {
+        float u = 1.0 - t;
+        float tt = t * t;
+        float uu = u * u;
+        float uuu = uu * u;
+        float ttt = tt * t;
+        vec2 p = uuu * p0;
+        p += 3.0 * uu * t * p1;
+        p += 3.0 * u * tt * p2;
+        p += ttt * p3;
+        return p;
+      }
+
+      float bezierParamForX(float x, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
+        float t = x;
+        for (int i = 0; i < 5; i++) {
+          vec2 bezierPoint = cubicBezierPoint(p0, p1, p2, p3, t);
+          float x_t = bezierPoint.x;
+          float dx_dt = -3.0 * (1.0 - t) * (1.0 - t) * p0.x
+                      + 3.0 * (1.0 - 2.0 * t) * (1.0 - t) * p1.x
+                      + 3.0 * t * (2.0 - 3.0 * t) * p2.x
+                      + 3.0 * t * t * p3.x;
+          t -= (x_t - x) / dx_dt;
+          t = clamp(t, 0.0, 1.0);
+        }
+        return t;
+      }
+
+      float easeEmphasizedAccelerate(float x) {
+        vec2 p0 = vec2(0.0, 0.0);
+        vec2 p1 = vec2(0.05, 0.7);
+        vec2 p2 = vec2(0.1, 1.0);
+        vec2 p3 = vec2(1.0, 1.0);
+        float t = bezierParamForX(x, p0, p1, p2, p3);
+        vec2 bezierPoint = cubicBezierPoint(p0, p1, p2, p3, t);
+        return bezierPoint.y;
+      }
+
+      void main() {
+        vec2 fragCoord = v_texCoord * u_resolution;
+        float distanceToOrigin = length(fragCoord - u_origin);
+
+        float localStartDelay = distanceToOrigin / u_waveSpeed;
+        float localTime = max(0.0, u_time - localStartDelay);
+
+        float rippleAmount = u_amplitude * sin(u_angularFrequency * localTime) * exp(-u_decayRate * localTime);
+
+        vec2 outwardNormal = normalize(fragCoord - u_origin + vec2(0.001));
+        vec2 tangent = vec2(-outwardNormal.y, outwardNormal.x);
+        float swirlMix = 0.85 * sin(u_angularFrequency * localTime + distanceToOrigin * 0.04);
+        vec2 swirlDir = normalize(outwardNormal + swirlMix * tangent);
+
+        vec2 displacedCoord = fragCoord + rippleAmount * swirlDir;
+
+        float easeFactor = clamp(distanceToOrigin / u_maxRadius, 0.0, 1.0);
+        displacedCoord = mix(fragCoord, displacedCoord, easeEmphasizedAccelerate(easeFactor));
+
+        vec2 displacedUV = displacedCoord / u_resolution;
+        vec4 color = texture2D(u_texture, displacedUV);
+
+        float ampSafe = max(abs(u_amplitude), 0.00001);
+        float aberration = u_tintRatio * abs(rippleAmount) / ampSafe;
+        vec2 abOffset = swirlDir * aberration / u_resolution;
+
+        float r = texture2D(u_texture, displacedUV + abOffset).r;
+        float g = color.g;
+        float b = texture2D(u_texture, displacedUV - abOffset).b;
+
+        gl_FragColor = vec4(r, g, b, color.a);
+      }
+    `;
+
+    class WaveShader {
+      constructor(canvas) {
+        this.canvas = canvas;
+        this.gl = canvas.getContext('webgl', {
+          alpha: true,
+          premultipliedAlpha: false,
+          preserveDrawingBuffer: true
+        });
+
+        if (!this.gl) {
+          console.warn('WebGL not supported');
+          return;
+        }
+
+        this.program = this.createProgram();
+        this.setupBuffers();
+        this.setupUniforms();
+
+        this.ripples = [];
+        this.isAnimating = false;
+        this.texture = null;
+      }
+
+      createShader(type, source) {
+        const gl = this.gl;
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+          gl.deleteShader(shader);
+          return null;
+        }
+        return shader;
+      }
+
+      createProgram() {
+        const gl = this.gl;
+        const vertShader = this.createShader(gl.VERTEX_SHADER, vertexShaderSource);
+        const fragShader = this.createShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+        const program = gl.createProgram();
+        gl.attachShader(program, vertShader);
+        gl.attachShader(program, fragShader);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+          console.error('Program link error:', gl.getProgramInfoLog(program));
+          return null;
+        }
+
+        return program;
+      }
+
+      setupBuffers() {
+        const gl = this.gl;
+
+        const positions = new Float32Array([
+          -1, -1,  1, -1,  -1, 1,
+          -1,  1,  1, -1,   1, 1
+        ]);
+
+        this.positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+        const texCoords = new Float32Array([
+          0, 1,  1, 1,  0, 0,
+          0, 0,  1, 1,  1, 0
+        ]);
+
+        this.texCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+      }
+
+      setupUniforms() {
+        const gl = this.gl;
+        gl.useProgram(this.program);
+
+        this.uniforms = {
+          texture: gl.getUniformLocation(this.program, 'u_texture'),
+          resolution: gl.getUniformLocation(this.program, 'u_resolution'),
+          origin: gl.getUniformLocation(this.program, 'u_origin'),
+          time: gl.getUniformLocation(this.program, 'u_time'),
+          amplitude: gl.getUniformLocation(this.program, 'u_amplitude'),
+          angularFrequency: gl.getUniformLocation(this.program, 'u_angularFrequency'),
+          decayRate: gl.getUniformLocation(this.program, 'u_decayRate'),
+          waveSpeed: gl.getUniformLocation(this.program, 'u_waveSpeed'),
+          maxRadius: gl.getUniformLocation(this.program, 'u_maxRadius'),
+          tintRatio: gl.getUniformLocation(this.program, 'u_tintRatio')
+        };
+
+        this.attributes = {
+          position: gl.getAttribLocation(this.program, 'a_position'),
+          texCoord: gl.getAttribLocation(this.program, 'a_texCoord')
+        };
+      }
+
+      captureDOM(element) {
+        return new Promise((resolve) => {
+          import('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/+esm').then(({ default: html2canvas }) => {
+            html2canvas(element, {
+              backgroundColor: '#0a0a0a',
+              scale: window.devicePixelRatio || 1,
+              logging: false
+            }).then(canvas => {
+              this.updateTexture(canvas);
+              resolve();
+            });
+          });
+        });
+      }
+
+      updateTexture(sourceCanvas) {
+        const gl = this.gl;
+
+        if (this.texture) {
+          gl.deleteTexture(this.texture);
+        }
+
+        this.texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      }
+
+      triggerRipple(x, y) {
+        const dpr = window.devicePixelRatio || 1;
+        this.ripples.push({
+          origin: { x: x * dpr, y: (this.canvas.height / dpr - y) * dpr },
+          startTime: performance.now(),
+          amplitude: 20,
+          angularFrequency: 12,
+          decayRate: 4,
+          waveSpeed: Math.hypot(this.canvas.width, this.canvas.height) * 0.4,
+          tintRatio: 40
+        });
+
+        if (!this.isAnimating) {
+          this.startAnimation();
+        }
+      }
+
+      startAnimation() {
+        this.isAnimating = true;
+        this.canvas.classList.add('active');
+        this.animate();
+      }
+
+      stopAnimation() {
+        this.isAnimating = false;
+        this.canvas.classList.remove('active');
+      }
+
+      animate() {
+        if (!this.isAnimating || !this.texture) return;
+
+        const gl = this.gl;
+        const now = performance.now();
+
+        this.ripples = this.ripples.filter(r => (now - r.startTime) / 1000 < 3);
+
+        if (this.ripples.length === 0) {
+          this.stopAnimation();
+          return;
+        }
+
+        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.useProgram(this.program);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+        gl.enableVertexAttribArray(this.attributes.position);
+        gl.vertexAttribPointer(this.attributes.position, 2, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
+        gl.enableVertexAttribArray(this.attributes.texCoord);
+        gl.vertexAttribPointer(this.attributes.texCoord, 2, gl.FLOAT, false, 0, 0);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
+        gl.uniform1i(this.uniforms.texture, 0);
+
+        gl.uniform2f(this.uniforms.resolution, this.canvas.width, this.canvas.height);
+
+        const ripple = this.ripples[this.ripples.length - 1];
+        const elapsed = (now - ripple.startTime) / 1000;
+        const maxRadius = Math.hypot(this.canvas.width, this.canvas.height) / 2;
+
+        gl.uniform2f(this.uniforms.origin, ripple.origin.x, ripple.origin.y);
+        gl.uniform1f(this.uniforms.time, elapsed);
+        gl.uniform1f(this.uniforms.amplitude, ripple.amplitude);
+        gl.uniform1f(this.uniforms.angularFrequency, ripple.angularFrequency);
+        gl.uniform1f(this.uniforms.decayRate, ripple.decayRate);
+        gl.uniform1f(this.uniforms.waveSpeed, ripple.waveSpeed);
+        gl.uniform1f(this.uniforms.maxRadius, maxRadius);
+        gl.uniform1f(this.uniforms.tintRatio, ripple.tintRatio);
+
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+        requestAnimationFrame(() => this.animate());
+      }
+
+      resize() {
+        const dpr = window.devicePixelRatio || 1;
+        this.canvas.width = window.innerWidth * dpr;
+        this.canvas.height = window.innerHeight * dpr;
+        this.canvas.style.width = window.innerWidth + 'px';
+        this.canvas.style.height = window.innerHeight + 'px';
+      }
+    }
+
+    // ===== VORTEX BACKGROUND =====
+    function createVortex() {
+      const vortexBg = document.getElementById('vortexBg');
+      const colors = ['#ff00ff', '#00ffff', '#ff6b9d', '#9370db', '#4169e1'];
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+
+      for (let i = 0; i < 8; i++) {
+        const ring = document.createElement('div');
+        ring.className = 'vortex-ring';
+        const size = 150 + i * 120;
+        ring.style.width = size + 'px';
+        ring.style.height = size + 'px';
+        ring.style.left = centerX + 'px';
+        ring.style.top = centerY + 'px';
+        ring.style.borderColor = colors[i % colors.length];
+        ring.style.animationDuration = (6 + i * 0.8) + 's';
+        ring.style.animationDirection = i % 2 === 0 ? 'normal' : 'reverse';
+        vortexBg.appendChild(ring);
+      }
+    }
+
+    // ===== FLOATING STARS =====
+    function createStars() {
+      const starSymbols = ['*', '+', '.'];
+      const stars = [];
+
+      for (let i = 0; i < 12; i++) {
+        const star = document.createElement('div');
+        star.className = 'floating-star';
+        star.textContent = starSymbols[i % starSymbols.length];
+        star.style.left = (10 + Math.random() * 80) + '%';
+        star.style.top = (10 + Math.random() * 80) + '%';
+        star.style.color = ['#ffd700', '#ff69b4', '#00ffff', '#9370db'][i % 4];
+        star.style.animationDelay = (Math.random() * 2) + 's';
+        star.style.fontSize = (18 + Math.random() * 16) + 'px';
+        document.body.appendChild(star);
+        stars.push(star);
+      }
+
+      return stars;
+    }
+
+    // ===== MAIN APP =====
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+    if (!isMobile) {
+      document.getElementById('hint').textContent = 'move to wake the bear';
+    }
+
+    const BEAR_ART = `                         QQYSUSU          UQOQQQQUWY
+                    USYSQSQWUY SUSSSW   SOS       QS
+                 WSSY                WQQQ    QY     SW
+ YUQQUYWUQQQSUSQW                          YS  USW   Q
+           YQS                                    Y  UY
+U     QUY                                        S
+     US  QY                                      W  UY
+   WU     Y                                       SQW
+                                                   YSY
+    YU  U                               WSQY         QY
+U                     SQW                             U
+ SQW                                                  YS
+  SSW                                                  WU
+  QY                                     YWY            Y
+  QY                                    WUS QU          WU
+  SY                  WUQYUY            U SOQ      Y     UU
+  SW                  YUSQQQ   UY  Y  YYU     YY          YSSU
+  WW                   W    UW           U  U                UU
+  UW           YUUUWWYWWW  W     SOSOOS    U                 WS
+ WQ                       S      UOQOQ      W                 WQ
+SQW                       Y        YU                          SW
+QW                                                             WW
+SY                                           QW                UY
+OY                        Q                 Y                 YS
+Q                       YUYW                U                 SW
+Q                           U              W                 WS
+QY                           WY          W                  WQ
+SSY                             YWYWWUW                    US
+ WUY                               YQS                   YQU
+   UW                               WSY                YQS
+    US      YYY                                     YSQQQS
+      QSSQUWYYYWSQU                   Y             Y    WQSW
+U  SQQ            YS               YQWW UUWWSW              WQS
+QOUY                          WSU                USW          YSU
+Y                         YSW                        YW  WS     YSY
+                        SU                Y             U  QW     SW
+                     YS                  YWWWWW   Y       Y  QY    WSY
+                     SY                Y    Y    Y         UY YU     USW
+            WS     UY               Y   UWW         WWW      S U       WQS
+          UQY     S               WWWWW UWW    Y     Y        SYQYUY     U
+           WU    Q            WY  WWWWW YWY   Y                U S       W
+            YQ  U             Y     YWWU Y                      QYQ
+             YQU                                  WWWW           WWW`;
+
+    const lines = BEAR_ART.split('\n');
+    const bearHeight = lines.length;
+    const bearWidth = Math.max(...lines.map(l => l.length));
+
+    function parseBearPositions() {
+      const positions = [];
+      for (let y = 0; y < lines.length; y++) {
+        for (let x = 0; x < lines[y].length; x++) {
+          if (lines[y][x] !== ' ') {
+            positions.push({ x, y, char: lines[y][x] });
+          }
+        }
+      }
+      return positions;
+    }
+
+    function groupByChar(positions) {
+      const groups = {};
+      positions.forEach(pos => {
+        if (!groups[pos.char]) groups[pos.char] = [];
+        groups[pos.char].push(pos);
+      });
+      return groups;
+    }
+
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    const bearPositions = parseBearPositions();
+    const charGroups = groupByChar(bearPositions);
+    const uniqueChars = Object.keys(charGroups).sort();
+
+    const container = document.getElementById('container');
+    const hint = document.getElementById('hint');
+    const scrollContent = document.getElementById('scrollContent');
+    const scrollHint = document.getElementById('scrollHint');
+    const pageMarker = document.getElementById('pageMarker');
+    const shaderCanvas = document.getElementById('shaderCanvas');
+    const vortexBg = document.getElementById('vortexBg');
+    const asciiCloud = document.getElementById('asciiCloud');
+    const zzzContainer = document.getElementById('zzzContainer');
+
+    let activated = false;
+    let assembled = false;
+    let sleeping = false;
+    let waveShader = null;
+    let floatingStars = [];
+    const allElements = [];
+
+    const CHAR_W = isMobile ? 5 : 6;
+    const CHAR_H = isMobile ? 10 : 12;
+
+    function getLayout() {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      const charsPerRow = Math.ceil(uniqueChars.length / 2);
+      const stackSpacing = isMobile ? 35 : 50;
+      const stackWidth = charsPerRow * stackSpacing;
+      const stackStartX = vw / 2 - stackWidth / 2;
+      const stackStartY = vh / 2 - 40;
+
+      const bearPixelW = bearWidth * CHAR_W;
+      const bearPixelH = bearHeight * CHAR_H;
+      const bearStartX = vw / 2 - bearPixelW / 2;
+      const bearStartY = vh / 2 - bearPixelH / 2;
+
+      return { stackStartX, stackStartY, stackSpacing, charsPerRow, bearStartX, bearStartY, bearPixelW, bearPixelH, vw, vh };
+    }
+
+    function init() {
+      const { stackStartX, stackStartY, stackSpacing, charsPerRow, bearStartX, bearStartY } = getLayout();
+
+      const fragment = document.createDocumentFragment();
+
+      const stackPositions = [];
+      uniqueChars.forEach((char, charIndex) => {
+        const row = charIndex < charsPerRow ? 0 : 1;
+        const col = charIndex < charsPerRow ? charIndex : charIndex - charsPerRow;
+        const stackX = stackStartX + col * stackSpacing;
+        const stackY = stackStartY + row * (isMobile ? 45 : 60);
+
+        const instances = charGroups[char];
+        instances.forEach(() => {
+          const offsetX = (Math.random() - 0.5) * (isMobile ? 10 : 14);
+          const offsetY = (Math.random() - 0.5) * (isMobile ? 10 : 14);
+          stackPositions.push({
+            char,
+            x: stackX + offsetX,
+            y: stackY + offsetY
+          });
+        });
+      });
+
+      const targetPositions = bearPositions.map(pos => ({
+        char: pos.char,
+        x: bearStartX + pos.x * CHAR_W,
+        y: bearStartY + pos.y * CHAR_H,
+        gridY: pos.y,
+        gridX: pos.x
+      }));
+
+      const targetsByChar = {};
+      targetPositions.forEach(t => {
+        if (!targetsByChar[t.char]) targetsByChar[t.char] = [];
+        targetsByChar[t.char].push(t);
+      });
+
+      const stacksByChar = {};
+      stackPositions.forEach(s => {
+        if (!stacksByChar[s.char]) stacksByChar[s.char] = [];
+        stacksByChar[s.char].push(s);
+      });
+
+      uniqueChars.forEach(char => {
+        const stacks = stacksByChar[char];
+        const targets = shuffle(targetsByChar[char]);
+
+        stacks.forEach((stack, i) => {
+          const target = targets[i];
+
+          const el = document.createElement('span');
+          el.className = 'letter';
+          el.textContent = char;
+          el.style.left = stack.x + 'px';
+          el.style.top = stack.y + 'px';
+
+          el._startX = stack.x;
+          el._startY = stack.y;
+          el._targetX = target.x;
+          el._targetY = target.y;
+          el._gridY = target.gridY;
+          el._gridX = target.gridX;
+          el._depth = target.gridY / bearHeight;
+
+          const durationMult = isMobile ? 0.7 : 1;
+          el._delay = Math.random() * 3500 * durationMult;
+          el._duration = (4000 + Math.random() * 6000) * durationMult;
+
+          el._wobbleFreqX = 3 + Math.random() * 8;
+          el._wobbleFreqY = 2 + Math.random() * 6;
+          el._wobbleAmpX = (2 + Math.random() * 8) * (isMobile ? 0.7 : 1);
+          el._wobbleAmpY = (1 + Math.random() * 5) * (isMobile ? 0.7 : 1);
+
+          el._overshoot = 0.5 + Math.random() * 2;
+          el._pauseAt = Math.random() < (isMobile ? 0.15 : 0.3) ? 0.3 + Math.random() * 0.4 : null;
+          el._pauseDuration = (200 + Math.random() * 800) * (isMobile ? 0.5 : 1);
+          el._speedMult = 0.6 + Math.random() * 0.8;
+
+          fragment.appendChild(el);
+          allElements.push(el);
+        });
+      });
+
+      container.appendChild(fragment);
+
+      // Initialize systems
+      waveShader = new WaveShader(shaderCanvas);
+      waveShader.resize();
+      createVortex();
+      floatingStars = createStars();
+    }
+
+    function enableScrolling() {
+      document.body.classList.remove('no-scroll');
+      scrollContent.classList.add('active');
+      scrollHint.classList.add('visible');
+      pageMarker.classList.add('visible');
+
+      setTimeout(() => {
+        scrollHint.classList.remove('visible');
+      }, 3000);
+
+      window.addEventListener('scroll', onScroll, { passive: true });
+
+      container.addEventListener('click', handleWaveClick);
+      container.addEventListener('touchstart', handleWaveTouch, { passive: true });
+    }
+
+    async function handleWaveClick(e) {
+      if (!assembled || !waveShader || !waveShader.gl) return;
+
+      await waveShader.captureDOM(container);
+      waveShader.triggerRipple(e.clientX, e.clientY);
+    }
+
+    async function handleWaveTouch(e) {
+      if (!assembled || !waveShader || !waveShader.gl) return;
+
+      const touch = e.touches[0];
+      await waveShader.captureDOM(container);
+      waveShader.triggerRipple(touch.clientX, touch.clientY);
+    }
+
+    let lastScrollY = 0;
+    let ticking = false;
+
+    function onScroll() {
+      lastScrollY = window.scrollY;
+      if (!ticking) {
+        requestAnimationFrame(handleScroll);
+        ticking = true;
+      }
+    }
+
+    function handleScroll() {
+      ticking = false;
+
+      const scrollY = lastScrollY;
+      const maxScroll = document.body.scrollHeight - window.innerHeight;
+      const scrollProgress = Math.min(scrollY / maxScroll, 1);
+
+      const pageMarkers = pageMarker.querySelectorAll('span');
+      const currentPage = Math.floor(scrollProgress * 5);
+      pageMarkers.forEach((m, i) => {
+        m.classList.toggle('active', i <= currentPage);
+      });
+
+      // Phase 1: 0-20% - Vortex appears, stars show
+      if (scrollProgress > 0.05) {
+        vortexBg.classList.add('active');
+        floatingStars.forEach(s => s.classList.add('visible'));
+      } else {
+        vortexBg.classList.remove('active');
+        floatingStars.forEach(s => s.classList.remove('visible'));
+      }
+
+      // Phase 2: 20-40% - Cloud appears from bottom
+      if (scrollProgress > 0.2) {
+        asciiCloud.classList.add('visible');
+      } else {
+        asciiCloud.classList.remove('visible');
+        asciiCloud.classList.remove('rise');
+      }
+
+      // Phase 3: 40-60% - Bear settles onto cloud, cloud rises
+      if (scrollProgress > 0.4) {
+        asciiCloud.classList.add('rise');
+      }
+
+      // Phase 4: 60-80% - Bear starts sleeping
+      if (scrollProgress > 0.6 && !sleeping) {
+        sleeping = true;
+        // Position Zzz near bear's head
+        const { bearStartX, bearStartY, bearPixelW } = getLayout();
+        zzzContainer.style.left = (bearStartX + bearPixelW * 0.7) + 'px';
+        zzzContainer.style.top = (bearStartY - 50 - scrollY * 0.3) + 'px';
+        zzzContainer.classList.add('visible');
+      } else if (scrollProgress <= 0.5) {
+        sleeping = false;
+        zzzContainer.classList.remove('visible');
+      }
+
+      // Update Zzz position with scroll
+      if (sleeping) {
+        const { bearStartX, bearStartY, bearPixelW } = getLayout();
+        const baseY = bearStartY - 50;
+        const cloudRise = scrollProgress > 0.4 ? (window.innerHeight * 0.3) : 0;
+        zzzContainer.style.top = (baseY - cloudRise * (scrollProgress - 0.4) / 0.6) + 'px';
+      }
+
+      const centerX = window.innerWidth / 2;
+      const cloudRiseAmount = scrollProgress > 0.4 ? Math.min((scrollProgress - 0.4) / 0.4, 1) * window.innerHeight * 0.25 : 0;
+
+      allElements.forEach(el => {
+        const depthFactor = 0.3 + el._depth * 0.7;
+        let offsetY = -scrollY * depthFactor * 0.5;
+
+        // After 40%, bear settles onto cloud - reduce spread, add gentle bounce
+        if (scrollProgress > 0.4) {
+          const settleProgress = Math.min((scrollProgress - 0.4) / 0.3, 1);
+          offsetY -= cloudRiseAmount * (1 - el._depth * 0.3);
+
+          // Gentle breathing motion when sleeping
+          if (scrollProgress > 0.6) {
+            const breathe = Math.sin(performance.now() / 1000 * 0.5) * 2 * (1 - el._depth);
+            offsetY += breathe;
+          }
+        }
+
+        const distFromCenter = el._targetX - centerX;
+        const spreadMult = scrollProgress > 0.4 ? Math.max(0, 1 - (scrollProgress - 0.4) / 0.3) : 1;
+        const spreadX = distFromCenter * scrollProgress * 0.3 * spreadMult;
+
+        const rotation = (el._gridX - bearWidth / 2) * scrollProgress * 0.5 * spreadMult;
+        const scale = 1 + scrollProgress * (1 - el._depth) * 0.2 * spreadMult;
+        const opacity = scrollProgress > 0.7 ? 0.85 : 1 - scrollProgress * 0.15;
+
+        const dx = el._targetX - el._startX;
+        const dy = el._targetY - el._startY;
+
+        el.style.transform = `translate3d(${dx + spreadX}px, ${dy + offsetY}px, 0) rotate(${rotation}deg) scale(${scale})`;
+        el.style.opacity = opacity;
+
+        // Dim color slightly when sleeping
+        if (scrollProgress > 0.6) {
+          el.style.color = '#7b68b8';
+        } else {
+          el.style.color = '#9370db';
+        }
+      });
+    }
+
+    function scurry() {
+      if (activated) return;
+      activated = true;
+      hint.classList.add('hidden');
+
+      let maxEndTime = 0;
+      const startNow = performance.now();
+
+      allElements.forEach(el => {
+        const dx = el._targetX - el._startX;
+        const dy = el._targetY - el._startY;
+
+        const elStartTime = startNow + el._delay;
+        const baseDuration = el._duration;
+        let pauseStart = null;
+        let totalPauseTime = 0;
+        let pauseTriggered = false;
+
+        const endTime = el._delay + baseDuration / el._speedMult + (el._pauseAt ? el._pauseDuration : 0);
+        if (endTime > maxEndTime) maxEndTime = endTime;
+
+        function easeOutBack(t, overshoot) {
+          const c1 = overshoot;
+          const c3 = c1 + 1;
+          return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+        }
+
+        function animate(now) {
+          if (now < elStartTime) {
+            requestAnimationFrame(animate);
+            return;
+          }
+
+          let elapsed = (now - elStartTime - totalPauseTime) * el._speedMult;
+          let progress = Math.min(elapsed / baseDuration, 1);
+
+          if (el._pauseAt && !pauseTriggered && progress >= el._pauseAt && progress < 1) {
+            if (!pauseStart) {
+              pauseStart = now;
+            }
+            if (now - pauseStart < el._pauseDuration) {
+              const jitterX = (Math.random() - 0.5) * 1;
+              const jitterY = (Math.random() - 0.5) * 1;
+              const eased = easeOutBack(el._pauseAt, el._overshoot);
+              const currentX = dx * eased + jitterX;
+              const currentY = dy * eased + jitterY;
+              el.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
+              requestAnimationFrame(animate);
+              return;
+            } else {
+              totalPauseTime += el._pauseDuration;
+              pauseTriggered = true;
+            }
+          }
+
+          elapsed = (now - elStartTime - totalPauseTime) * el._speedMult;
+          progress = Math.min(elapsed / baseDuration, 1);
+
+          const eased = easeOutBack(progress, el._overshoot);
+          const fadeOut = Math.pow(1 - progress, 2);
+          const wobbleX = Math.sin(progress * Math.PI * el._wobbleFreqX) * el._wobbleAmpX * fadeOut;
+          const wobbleY = Math.cos(progress * Math.PI * el._wobbleFreqY) * el._wobbleAmpY * fadeOut;
+
+          const currentX = dx * eased + wobbleX;
+          const currentY = dy * eased + wobbleY;
+
+          el.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
+
+          if (progress < 1) {
+            requestAnimationFrame(animate);
+          }
+        }
+
+        requestAnimationFrame(animate);
+      });
+
+      setTimeout(() => {
+        assembled = true;
+        enableScrolling();
+      }, maxEndTime + 500);
+    }
+
+    // Event listeners
+    if (isMobile) {
+      container.addEventListener('touchstart', scurry, { once: true, passive: true });
+    } else {
+      container.addEventListener('mousemove', scurry, { once: true, passive: true });
+    }
+    container.addEventListener('click', scurry, { once: true, passive: true });
+    document.addEventListener('keydown', scurry, { once: true });
+
+    init();
+
+    // Handle resize
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (waveShader) {
+          waveShader.resize();
+        }
+        if (!activated) {
+          allElements.forEach(el => el.remove());
+          allElements.length = 0;
+          floatingStars.forEach(s => s.remove());
+          floatingStars.length = 0;
+          vortexBg.innerHTML = '';
+          init();
+        }
+      }, 200);
+    });
+
+    document.body.addEventListener('touchmove', (e) => {
+      if (document.body.classList.contains('no-scroll')) {
+        e.preventDefault();
+      }
+    }, { passive: false });
+
+    // Breathing animation loop for sleeping bear
+    function breathingLoop() {
+      if (sleeping) {
+        handleScroll();
+      }
+      requestAnimationFrame(breathingLoop);
+    }
+    breathingLoop();
+  </script>
+</body>
+</html>
