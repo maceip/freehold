@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ebpf-loader",
+    "crates/ebpf-program",
+    "crates/proxy-client",
+    "crates/xtask",
+    "crates/client-core",
+    "crates/client-macos",
+    "crates/client-windows",
+    "crates/client-linux",
+]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
