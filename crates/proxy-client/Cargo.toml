@@ -1,0 +1,78 @@
+[package]
+name = "proxy-client"
+version = "0.1.0"
+edition = "2021"
+description = "Carebears - Sharing is caring: internet addressable secure origins for all!"
+
+[[bin]]
+name = "carebears"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP/1.1 & HTTP/2
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full", "tokio"] }
+http-body-util = "0.1"
+
+# TLS
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
+ring = "0.17"
+base64 = "0.22"
+
+# ACME (TODO: add back when implementing DNS-01)
+# instant-acme = "0.7"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Networking
+bytes = "1"
+socket2 = "0.6"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = "0.4"
+
+# Dirs for config/certs
+dirs = "6"
+
+# HTTP types
+http = "1"
+
+# System tray (optional - requires GTK on Linux)
+# Install on Linux: sudo apt install libgtk-3-dev libappindicator3-dev libxdo-dev
+tray-icon = { version = "0.19", optional = true }
+muda = { version = "0.15", optional = true }
+image = { version = "0.25", optional = true }
+
+[features]
+default = []
+tray = ["tray-icon", "muda", "image"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux service management
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS launchd
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows service
+windows-service = "0.7"

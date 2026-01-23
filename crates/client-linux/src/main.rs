@@ -5,13 +5,9 @@ mod linux_impl {
     use gtk4::prelude::*;
     use gtk4::{
         glib, Application, ApplicationWindow, Box as GtkBox, Button, Label, Orientation,
-        PopoverMenu, MenuButton, gio,
+        MenuButton, gio,
     };
-    use std::cell::RefCell;
-    use std::rc::Rc;
     use tracing::info;
-
-    use client_core::{ConnectionState, ProxyClient};
 
     const APP_ID: &str = "com.reflect.client";
 
@@ -101,12 +97,12 @@ mod linux_impl {
         let window = ApplicationWindow::builder()
             .application(app)
             .title("Reflect")
-            .titlebar(&header)
             .default_width(400)
             .default_height(300)
             .child(&content)
             .build();
 
+        window.set_titlebar(Some(&header));
         window.present();
         info!("Linux GTK4 client started");
     }

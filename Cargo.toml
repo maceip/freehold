@@ -9,6 +9,7 @@ members = [
     "crates/client-macos",
     "crates/client-windows",
     "crates/client-linux",
+    "crates/h3-server",
 ]
 
 [profile.dev]

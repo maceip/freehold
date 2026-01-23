@@ -1,0 +1,35 @@
+[package]
+name = "h3-server"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal H3/QUIC static file server for testing"
+
+[[bin]]
+name = "h3-server"
+path = "src/main.rs"
+
+[dependencies]
+# QUIC/H3 - tquic for multipath support
+tquic = { version = "1.6", features = ["h3"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# TLS cert generation
+rcgen = "0.13"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+
+# MIME types
+mime_guess = "2"
+
+[dev-dependencies]
+tempfile = "3"

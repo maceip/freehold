@@ -298,6 +298,34 @@
       .zzz:nth-child(3) { font-size: 16px; }
     }
 
+    /* ASCII Frame Animation Display */
+    .ascii-frame {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 8px;
+      line-height: 1.1;
+      color: #c084fc;
+      white-space: pre;
+      z-index: 15;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      pointer-events: none;
+      text-shadow: 0 0 10px rgba(192, 132, 252, 0.5);
+    }
+
+    .ascii-frame.visible {
+      opacity: 1;
+    }
+
+    @media (max-width: 768px) {
+      .ascii-frame {
+        font-size: 5px;
+      }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .letter, .vortex-ring, .floating-star, .zzz {
         animation: none !important;
@@ -342,6 +370,9 @@
     <span class="zzz">z</span>
   </div>
 
+  <!-- ASCII Frame Animation Display -->
+  <pre class="ascii-frame" id="asciiFrame"></pre>
+
   <canvas id="shaderCanvas"></canvas>
   <div class="scroll-content" id="scrollContent"></div>
   <div class="scroll-hint" id="scrollHint">scroll to explore</div>
@@ -353,6 +384,7 @@
     <span></span>
   </div>
 
+  <script src="bear-animation.js"></script>
   <script>
     // ===== WEBGL WAVE DISTORTION SHADER =====
     const vertexShaderSource = `
@@ -816,6 +848,34 @@ Y                         YSW                        YW  WS     YSY
     const vortexBg = document.getElementById('vortexBg');
     const asciiCloud = document.getElementById('asciiCloud');
     const zzzContainer = document.getElementById('zzzContainer');
+    const asciiFrame = document.getElementById('asciiFrame');
+
+    // Frame animation state
+    let currentFrameIndex = 0;
+    let frameAnimationActive = false;
+
+    // Update ASCII frame based on scroll progress
+    function updateAsciiFrame(scrollProgress) {
+      if (typeof BEAR_FRAMES === 'undefined' || !BEAR_FRAMES.length) return;
+
+      // Map scroll progress (0.3-1.0) to frame index (0-15)
+      // Start showing frames after 30% scroll
+      if (scrollProgress < 0.3) {
+        asciiFrame.classList.remove('visible');
+        return;
+      }
+
+      const frameProgress = (scrollProgress - 0.3) / 0.7; // 0.3-1.0 mapped to 0-1
+      const frameIndex = Math.min(Math.floor(frameProgress * BEAR_FRAMES.length), BEAR_FRAMES.length - 1);
+
+      if (frameIndex !== currentFrameIndex || !frameAnimationActive) {
+        currentFrameIndex = frameIndex;
+        asciiFrame.textContent = BEAR_FRAMES[frameIndex];
+        frameAnimationActive = true;
+      }
+
+      asciiFrame.classList.add('visible');
+    }
 
     let activated = false;
     let assembled = false;
@@ -992,6 +1052,9 @@ Y                         YSW                        YW  WS     YSY
       pageMarkers.forEach((m, i) => {
         m.classList.toggle('active', i <= currentPage);
       });
+
+      // Update ASCII frame animation
+      updateAsciiFrame(scrollProgress);
 
       // Phase 1: 0-20% - Vortex appears, stars show
       if (scrollProgress > 0.05) {
