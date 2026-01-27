@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freehold - Public IPs for all your devices</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0a0a;
+      --fg: #e8e8e8;
+      --dim: #666;
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 4rem 2rem;
+    }
+
+    h1 {
+      font-size: 3rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 1rem;
+    }
+
+    h1 span {
+      color: var(--accent);
+    }
+
+    .tagline {
+      font-size: 1.5rem;
+      color: var(--dim);
+      margin-bottom: 3rem;
+    }
+
+    .hero-text {
+      font-size: 1.25rem;
+      margin-bottom: 3rem;
+      max-width: 600px;
+    }
+
+    .code-block {
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 2rem 0;
+      overflow-x: auto;
+    }
+
+    .code-block code {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.9rem;
+      color: var(--fg);
+    }
+
+    .code-block .comment {
+      color: var(--dim);
+    }
+
+    .code-block .cmd {
+      color: var(--accent);
+    }
+
+    .features {
+      display: grid;
+      gap: 2rem;
+      margin: 4rem 0;
+    }
+
+    .feature h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+      color: var(--accent);
+    }
+
+    .feature p {
+      color: var(--dim);
+    }
+
+    .cta {
+      margin-top: 3rem;
+    }
+
+    .cta a {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--bg);
+      padding: 0.875rem 2rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+
+    .cta a:hover {
+      background: var(--accent-dim);
+    }
+
+    .footer {
+      margin-top: 6rem;
+      padding-top: 2rem;
+      border-top: 1px solid #222;
+      color: var(--dim);
+      font-size: 0.875rem;
+    }
+
+    .footer a {
+      color: var(--fg);
+      text-decoration: none;
+    }
+
+    .meta {
+      margin-top: 4rem;
+      padding: 1.5rem;
+      background: #0f1f15;
+      border: 1px solid #1a3325;
+      border-radius: 8px;
+      font-size: 0.875rem;
+    }
+
+    .meta strong {
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Free<span>hold</span></h1>
+    <p class="tagline">Public IPs for all your devices</p>
+
+    <p class="hero-text">
+      Give any device a real public IP address. Host services that browsers trust
+      like a bank — not a tunnel URL. Works from behind CGNAT, double-NAT, or
+      corporate firewalls.
+    </p>
+
+    <div class="code-block">
+      <code>
+        <span class="comment"># Expose localhost:3000 to the internet</span><br>
+        <span class="cmd">freehold</span> --relay net.freehold.lit.app:9999 --port 443 --backend 127.0.0.1:3000
+      </code>
+    </div>
+
+    <p>Your service is now reachable at a real IP address. No dynamic DNS. No tunnel subdomains. Just a clean, trusted address.</p>
+
+    <div class="features">
+      <div class="feature">
+        <h3>Wire-speed forwarding</h3>
+        <p>eBPF/XDP processes packets in the kernel before they hit userspace. No overhead, no bottleneck.</p>
+      </div>
+
+      <div class="feature">
+        <h3>Stateless verification</h3>
+        <p>HMAC cookie challenge prevents registration spoofing without storing session state.</p>
+      </div>
+
+      <div class="feature">
+        <h3>Anycast routing</h3>
+        <p>BGP announces your prefix globally. Traffic automatically routes to the nearest relay.</p>
+      </div>
+
+      <div class="feature">
+        <h3>NAT hole-punching</h3>
+        <p>UDP-based registration opens paths through restrictive NATs. No port forwarding required.</p>
+      </div>
+    </div>
+
+    <div class="cta">
+      <a href="https://git.sr.ht/~rpm/freehold">View Source</a>
+    </div>
+
+    <div class="meta">
+      <strong>This page is hosted through Freehold.</strong><br>
+      A server behind NAT registered port 443 on our anycast relay. You're seeing the result.
+    </div>
+
+    <div class="footer">
+      <p><a href="https://git.sr.ht/~rpm/freehold">git.sr.ht/~rpm/freehold</a> · MIT License</p>
+    </div>
+  </div>
+</body>
+</html>
