@@ -1,0 +1,4 @@
+module FreeholdFFI {
+    header "freehold_ffi.h"
+    export *
+}
