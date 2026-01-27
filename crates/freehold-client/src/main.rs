@@ -13,9 +13,9 @@ use tracing::info;
 #[derive(Parser)]
 #[command(name = "freehold", about = "Expose your service through Freehold")]
 struct Args {
-    /// Relay server address
-    #[clap(short, long)]
-    relay: SocketAddr,
+    /// Relay server address (not required in --local mode)
+    #[clap(short, long, required_unless_present = "local")]
+    relay: Option<SocketAddr>,
 
     /// Port to claim on the relay
     #[clap(short, long)]
@@ -49,6 +49,10 @@ struct Args {
     /// Domain name for self-signed certificate
     #[clap(long, default_value = "localhost")]
     domain: String,
+
+    /// Run in local mode (H3 proxy only, no relay registration)
+    #[clap(long)]
+    local: bool,
 }
 
 #[tokio::main]
@@ -60,14 +64,24 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let (status_tx, status_rx) = mpsc::channel(32);
 
-    info!("Starting Freehold - claiming port {} via {}", args.port, args.relay);
+    // Local mode: H3 proxy only, no relay registration
+    if args.local {
+        let backend = args.backend.ok_or_else(|| {
+            anyhow::anyhow!("--backend is required in --local mode")
+        })?;
+        info!("Starting Freehold in local mode (H3 proxy only)");
+        return run_local_h3_proxy(args, backend).await;
+    }
+
+    let relay = args.relay.expect("relay required when not in local mode");
+    info!("Starting Freehold - claiming port {} via {}", args.port, relay);
 
     // Determine if we're in H3 proxy mode
     if let Some(backend) = args.backend {
-        run_with_h3_proxy(args, backend, status_tx, status_rx).await
+        run_with_h3_proxy(args, relay, backend, status_tx, status_rx).await
     } else {
         // Registration-only mode
-        let engine = Engine::new(args.relay, args.port, args.discover, status_tx)?;
+        let engine = Engine::new(relay, args.port, args.discover, status_tx)?;
 
         if args.headless {
             run_headless(engine, status_rx).await
@@ -77,9 +91,60 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Run with H3 proxy (full service mode)
+/// Run in local mode (H3 proxy only, no relay registration)
+async fn run_local_h3_proxy(args: Args, backend: SocketAddr) -> Result<()> {
+    use freehold_client_core::{
+        generate_self_signed_cert, H3Proxy, H3ProxyConfig, CertificateDer,
+    };
+
+    let h3_bind = args.h3_bind.unwrap_or_else(|| {
+        format!("0.0.0.0:{}", args.port).parse().unwrap()
+    });
+
+    info!("H3 proxy (local): {} -> backend {}", h3_bind, backend);
+
+    // Load or generate certs
+    let (certs, key) = if let (Some(cert_path), Some(key_path)) = (&args.cert, &args.key) {
+        info!("Loading TLS cert from {:?}", cert_path);
+
+        let cert_pem = std::fs::read(cert_path).context("read certificate file")?;
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_slice())
+            .collect::<Result<Vec<_>, _>>()
+            .context("parse certificates")?;
+
+        let key_pem = std::fs::read(key_path).context("read key file")?;
+        let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
+            .context("parse private key")?
+            .context("no private key found")?;
+
+        (certs, key)
+    } else {
+        info!("Generating self-signed cert for {}", args.domain);
+        generate_self_signed_cert(&[&args.domain])?
+    };
+
+    let proxy = H3Proxy::new(H3ProxyConfig {
+        bind_addr: h3_bind,
+        backend,
+        certs,
+        key,
+    });
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        info!("Shutting down...");
+        let _ = shutdown_tx.send(true);
+    });
+
+    proxy.run(shutdown_rx).await
+}
+
+/// Run with H3 proxy (full service mode with relay registration)
 async fn run_with_h3_proxy(
     args: Args,
+    relay: SocketAddr,
     backend: SocketAddr,
     status_tx: mpsc::Sender<StatusUpdate>,
     mut status_rx: mpsc::Receiver<StatusUpdate>,
@@ -119,7 +184,7 @@ async fn run_with_h3_proxy(
 
         Service::new(
             ServiceConfig {
-                relay: args.relay,
+                relay,
                 relay_port: args.port,
                 h3_bind,
                 backend,
@@ -131,7 +196,7 @@ async fn run_with_h3_proxy(
         ).context("create service with provided certs")?
     } else {
         create_service_with_self_signed_cert(
-            args.relay,
+            relay,
             args.port,
             h3_bind,
             backend,
