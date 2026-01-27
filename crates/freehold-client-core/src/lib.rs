@@ -160,7 +160,8 @@ impl Engine {
             Err(_) => return,
         };
 
-        let idx = match self.relays.iter().position(|r| r.addr == from) {
+        // Match by port (server may respond from different IP due to anycast)
+        let idx = match self.relays.iter().position(|r| r.addr.port() == from.port()) {
             Some(i) => i,
             None => return,
         };
