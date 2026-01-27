@@ -1,0 +1,42 @@
+[package]
+name = "freehold-android-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+name = "freehold_android"
+
+[dependencies]
+# Internal crates
+freehold-api.workspace = true
+freehold-client-core = { workspace = true, features = ["h3-proxy"] }
+
+# UniFFI for Kotlin bindings
+uniffi = { version = "0.29" }
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "net"] }
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Networking
+bytes.workspace = true
+
+# Android-specific
+jni = "0.21"
+android_logger = "0.14"
+log = "0.4"
+
+# For parking_lot on Android
+parking_lot = "0.12"
+
+[build-dependencies]
+uniffi = { version = "0.29", features = ["build"] }
