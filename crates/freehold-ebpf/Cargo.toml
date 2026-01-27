@@ -1,0 +1,11 @@
+[package]
+name = "freehold-ebpf"
+description = "Freehold XDP program - kernel-space packet forwarding"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[dependencies]
+freehold-common = { path = "../freehold-common", default-features = false }
+
+[build-dependencies]

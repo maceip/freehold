@@ -1,0 +1,27 @@
+[package]
+name = "freehold-client"
+description = "Freehold client - desktop tray application"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "freehold"
+path = "src/main.rs"
+
+[dependencies]
+freehold-client-core = { workspace = true, features = ["h3-proxy"] }
+
+tokio = { workspace = true, features = ["signal"] }
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+freehold-platform-macos = { path = "../../platforms/macos" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+freehold-platform-windows = { path = "../../platforms/windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+freehold-platform-linux = { path = "../../platforms/linux" }

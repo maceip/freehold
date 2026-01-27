@@ -1,0 +1,30 @@
+[package]
+name = "freehold-server"
+description = "Freehold relay server daemon"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "freehold-server"
+path = "src/main.rs"
+
+[dependencies]
+freehold-common.workspace = true
+freehold-api.workspace = true
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+serde.workspace = true
+toml.workspace = true
+bytes.workspace = true
+
+aya = "0.13"
+aya-log = "0.2"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+libc = "0.2"
+ipnet = { version = "2.10", features = ["serde"] }

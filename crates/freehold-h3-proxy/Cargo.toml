@@ -1,0 +1,26 @@
+[package]
+name = "freehold-h3-proxy"
+description = "H3/QUIC to HTTP/1.1 reverse proxy for Freehold"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+
+# HTTP/3 stack
+quinn = "0.11"
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+# HTTP client for backend
+hyper = { version = "1.6", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+http = "1.2"
+http-body-util = "0.1"
+
+# TLS/certs
+rcgen = "0.14"

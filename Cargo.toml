@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/freehold-common",
+    "crates/freehold-api",
+    "crates/freehold-ebpf",
+    "crates/freehold-server",
+    "crates/freehold-client-core",
+    "crates/freehold-client",
+    "crates/freehold-h3-proxy",
+]
+
+# Exclude platforms from default workspace build
+exclude = [
+    "platforms/macos",
+    "platforms/windows",
+    "platforms/linux",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/freehold-network"
+
+[workspace.dependencies]
+# Internal crates
+freehold-common = { path = "crates/freehold-common" }
+freehold-api = { path = "crates/freehold-api" }
+freehold-client-core = { path = "crates/freehold-client-core" }
+
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+byteorder = "1.5"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Networking
+bytes = "1.10"

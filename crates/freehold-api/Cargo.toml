@@ -1,0 +1,9 @@
+[package]
+name = "freehold-api"
+description = "Network protocol contract between client and server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+byteorder.workspace = true
+thiserror.workspace = true

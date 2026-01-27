@@ -1,0 +1,30 @@
+[package]
+name = "freehold-platform-macos"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+freehold-client-core = { path = "../../crates/freehold-client-core" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSRunLoop", "NSThread"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSWindow",
+    "NSView",
+    "NSMenu",
+    "NSMenuItem",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSImage",
+    "NSButton",
+    "NSTextField",
+    "NSStackView",
+    "NSColor",
+    "NSResponder",
+    "NSRunningApplication",
+] }

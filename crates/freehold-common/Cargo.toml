@@ -1,0 +1,12 @@
+[package]
+name = "freehold-common"
+description = "Shared memory structures between server and eBPF kernel"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["userspace"]
+userspace = ["dep:aya"]
+
+[dependencies]
+aya = { version = "0.13", optional = true }

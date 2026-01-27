@@ -1,0 +1,17 @@
+[package]
+name = "freehold-client-core"
+description = "Freehold client engine - headless registration logic"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+freehold-api.workspace = true
+freehold-h3-proxy = { path = "../freehold-h3-proxy", optional = true }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[features]
+default = ["h3-proxy"]
+h3-proxy = ["freehold-h3-proxy"]
