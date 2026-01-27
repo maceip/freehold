@@ -84,7 +84,10 @@ async fn run_with_h3_proxy(
     status_tx: mpsc::Sender<StatusUpdate>,
     mut status_rx: mpsc::Receiver<StatusUpdate>,
 ) -> Result<()> {
-    use freehold_client_core::create_service_with_self_signed_cert;
+    use freehold_client_core::{
+        create_service_with_self_signed_cert, Service, ServiceConfig,
+        CertificateDer,
+    };
 
     // Determine H3 bind address
     let h3_bind = args.h3_bind.unwrap_or_else(|| {
@@ -96,16 +99,47 @@ async fn run_with_h3_proxy(
         h3_bind, backend
     );
 
-    // Create service with self-signed cert (TODO: support loading certs from file)
-    let service = create_service_with_self_signed_cert(
-        args.relay,
-        args.port,
-        h3_bind,
-        backend,
-        &args.domain,
-        args.discover,
-        status_tx,
-    ).context("create service")?;
+    // Create service - use provided certs or generate self-signed
+    let service = if let (Some(cert_path), Some(key_path)) = (&args.cert, &args.key) {
+        info!("Loading TLS cert from {:?}", cert_path);
+
+        // Load certificate chain
+        let cert_pem = std::fs::read(cert_path)
+            .context("read certificate file")?;
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_slice())
+            .collect::<Result<Vec<_>, _>>()
+            .context("parse certificates")?;
+
+        // Load private key
+        let key_pem = std::fs::read(key_path)
+            .context("read key file")?;
+        let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
+            .context("parse private key")?
+            .context("no private key found")?;
+
+        Service::new(
+            ServiceConfig {
+                relay: args.relay,
+                relay_port: args.port,
+                h3_bind,
+                backend,
+                certs,
+                key,
+                auto_discover: args.discover,
+            },
+            status_tx,
+        ).context("create service with provided certs")?
+    } else {
+        create_service_with_self_signed_cert(
+            args.relay,
+            args.port,
+            h3_bind,
+            backend,
+            &args.domain,
+            args.discover,
+            status_tx,
+        ).context("create service with self-signed cert")?
+    };
 
     // Spawn status printer
     tokio::spawn(async move {
