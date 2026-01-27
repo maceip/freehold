@@ -13,6 +13,33 @@ freehold --relay freehold.lit.app:9999 --port 8080 --backend 127.0.0.1:3000
 
 Your service is now reachable at `freehold.lit.app:8080`.
 
+## Try It With Tools You Already Have
+
+No need to install anything special for the backend. Freehold forwards traffic to whatever is listening.
+
+```bash
+# Terminal 1: Start a simple HTTP server
+python3 -m http.server 8000
+
+# Terminal 2: Expose it through Freehold
+freehold --relay freehold.lit.app:9999 --port 8080 --backend 127.0.0.1:8000 --headless
+```
+
+Or use netcat to see raw traffic:
+
+```bash
+# Terminal 1: Listen for connections
+nc -l -p 9000
+
+# Terminal 2: Register the port
+freehold --relay freehold.lit.app:9999 --port 8080 --backend 127.0.0.1:9000 --headless
+
+# From anywhere: connect and send data
+echo "hello from the internet" | nc freehold.lit.app 8080
+```
+
+Works with anything: nginx, caddy, node, flask, rails — if it binds to a port, Freehold can expose it.
+
 ## How It Works
 
 ```
