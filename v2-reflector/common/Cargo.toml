@@ -1,0 +1,13 @@
+[package]
+name = "specular-common"
+version = "0.1.0"
+edition = "2021"
+description = "Shared protocol definitions for Specular relay network"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde-big-array = "0.5"
+bincode = "1"
+ed25519-dalek = { version = "2", features = ["serde"] }
+rand = "0.8"
+thiserror = "2"

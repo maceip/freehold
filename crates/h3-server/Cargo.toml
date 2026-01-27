@@ -2,15 +2,25 @@
 name = "h3-server"
 version = "0.1.0"
 edition = "2021"
-description = "Minimal H3/QUIC static file server for testing"
+description = "H3/QUIC static file server using quinn with HTTPS fallback"
 
 [[bin]]
 name = "h3-server"
 path = "src/main.rs"
 
 [dependencies]
-# QUIC/H3 - tquic for multipath support
-tquic = { version = "1.6", features = ["h3"] }
+# QUIC/H3 - quinn ecosystem
+quinn = "0.11"
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+
+# TCP/HTTPS - hyper ecosystem
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
+http-body-util = "0.1"
+tokio-rustls = "0.26"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -30,6 +40,13 @@ anyhow = "1"
 
 # MIME types
 mime_guess = "2"
+
+# HTTP types
+http = "1"
+bytes = "1"
+
+# Futures
+futures-util = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

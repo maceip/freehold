@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "common",
+    "relay",
+    "client",
+]
+
+# eBPF is built separately with different toolchain
+
+[profile.release]
+lto = true
+codegen-units = 1

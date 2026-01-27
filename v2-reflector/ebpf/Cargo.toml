@@ -1,0 +1,8 @@
+[package]
+name = "specular-ebpf"
+version = "0.1.0"
+edition = "2021"
+description = "eBPF/XDP reflector for Specular relay"
+
+[dependencies]
+# Empty - this is built with aya-ebpf for the BPF target

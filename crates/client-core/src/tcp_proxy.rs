@@ -6,12 +6,11 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http::{Method, Request, Response, StatusCode, Uri, Version};
-use http_body_util::{BodyExt, Empty, Full};
-use hyper::body::Incoming;
+use http::{Method, Request, StatusCode, Uri};
+use http_body_util::{BodyExt, Full};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 
 use crate::ClientError;
 

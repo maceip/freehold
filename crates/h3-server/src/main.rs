@@ -1,29 +1,30 @@
-//! Minimal H3/QUIC static file server for testing tquic integration.
+//! H3/QUIC static file server using quinn.
 //!
 //! Usage:
 //!   h3-server --root ./website --port 4433
 //!
-//! This server:
-//! - Generates a self-signed cert on startup (saved to temp files)
+//! This is a working HTTP/3 server that:
+//! - Generates a self-signed cert on startup (or uses provided certs)
 //! - Serves static files over HTTP/3
-//! - Supports multipath QUIC (configurable)
+//! - Can be tested with: curl --http3-only -k https://localhost:4433/
 
-use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use clap::Parser;
-use tracing::{debug, error, info};
+use http::{Request, Response, StatusCode};
+use tracing::{debug, error, info, warn};
 
-use tquic::h3::connection::Http3Connection;
-use tquic::h3::Http3Config;
-use tquic::{Config, Connection, MultipathAlgorithm, TransportHandler};
+use h3::quic::BidiStream;
+use h3::server::RequestStream;
+use quinn::crypto::rustls::QuicServerConfig;
 
 #[derive(Parser, Debug)]
-#[command(name = "h3-server", about = "Minimal H3 static file server")]
+#[command(name = "h3-server", about = "H3/QUIC static file server")]
 struct Args {
     /// Root directory to serve files from
     #[arg(short, long, default_value = "./website")]
@@ -36,10 +37,6 @@ struct Args {
     /// Bind address
     #[arg(short, long, default_value = "0.0.0.0")]
     bind: String,
-
-    /// Enable multipath QUIC
-    #[arg(long)]
-    multipath: bool,
 
     /// TLS certificate file (PEM)
     #[arg(long)]
@@ -54,8 +51,14 @@ struct Args {
     log_level: String,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Install ring as the default crypto provider
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
 
     // Initialize logging
     tracing_subscriber::fmt()
@@ -68,7 +71,6 @@ fn main() -> Result<()> {
     info!("Starting H3 server");
     info!("  Root: {:?}", args.root);
     info!("  Bind: {}:{}", args.bind, args.port);
-    info!("  Multipath: {}", args.multipath);
 
     // Verify root directory exists
     if !args.root.exists() {
@@ -76,253 +78,269 @@ fn main() -> Result<()> {
     }
 
     // Get or generate TLS credentials
-    let (cert_path, key_path) = match (&args.cert, &args.key) {
-        (Some(cert), Some(key)) => (cert.clone(), key.clone()),
+    let (certs, key) = match (&args.cert, &args.key) {
+        (Some(cert_path), Some(key_path)) => load_certs_from_files(cert_path, key_path)?,
         _ => {
-            let (cert_path, key_path) = generate_self_signed_cert()?;
-            info!("Generated self-signed certificate");
-            info!("  Cert: {:?}", cert_path);
-            info!("  Key: {:?}", key_path);
-            (cert_path, key_path)
+            info!("Generating self-signed certificate...");
+            generate_self_signed_cert()?
         }
     };
 
     // Run the server
-    run_server(&args, &cert_path, &key_path)?;
+    run_server(&args, certs, key).await?;
 
     Ok(())
 }
 
-fn generate_self_signed_cert() -> Result<(PathBuf, PathBuf)> {
+fn load_certs_from_files(
+    cert_path: &PathBuf,
+    key_path: &PathBuf,
+) -> Result<(Vec<rustls::pki_types::CertificateDer<'static>>, rustls::pki_types::PrivateKeyDer<'static>)> {
+    let cert_pem = fs::read(cert_path).context("Failed to read certificate file")?;
+    let key_pem = fs::read(key_path).context("Failed to read key file")?;
+
+    let certs: Vec<_> = rustls_pemfile::certs(&mut cert_pem.as_slice())
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to parse certificates")?;
+
+    let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
+        .context("Failed to parse private key")?
+        .ok_or_else(|| anyhow::anyhow!("No private key found in file"))?;
+
+    Ok((certs, key))
+}
+
+fn generate_self_signed_cert() -> Result<(Vec<rustls::pki_types::CertificateDer<'static>>, rustls::pki_types::PrivateKeyDer<'static>)> {
     use rcgen::{CertificateParams, KeyPair};
 
-    // Generate key pair
     let key_pair = KeyPair::generate()?;
-
-    // Create certificate params with defaults
     let params = CertificateParams::new(vec!["localhost".to_string()])?;
-
-    // Generate certificate
     let cert = params.self_signed(&key_pair)?;
 
-    // Write to temp files
-    let temp_dir = std::env::temp_dir().join("h3-server");
-    fs::create_dir_all(&temp_dir)?;
+    let cert_der = rustls::pki_types::CertificateDer::from(cert.der().to_vec());
+    let key_der = rustls::pki_types::PrivateKeyDer::try_from(key_pair.serialize_der())
+        .map_err(|e| anyhow::anyhow!("Failed to convert key: {:?}", e))?;
 
-    let cert_path = temp_dir.join("cert.pem");
-    let key_path = temp_dir.join("key.pem");
+    info!("Self-signed certificate generated for localhost");
 
-    fs::write(&cert_path, cert.pem())?;
-    fs::write(&key_path, key_pair.serialize_pem())?;
-
-    Ok((cert_path, key_path))
+    Ok((vec![cert_der], key_der))
 }
 
-fn run_server(args: &Args, cert_path: &PathBuf, key_path: &PathBuf) -> Result<()> {
-    use std::net::UdpSocket;
+async fn run_server(
+    args: &Args,
+    certs: Vec<rustls::pki_types::CertificateDer<'static>>,
+    key: rustls::pki_types::PrivateKeyDer<'static>,
+) -> Result<()> {
+    // Create rustls config
+    let mut tls_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("Failed to create TLS config")?;
 
+    tls_config.alpn_protocols = vec![b"h3".to_vec()];
+    tls_config.max_early_data_size = u32::MAX;
+
+    // Create QUIC server config
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(tls_config).context("Failed to create QUIC server config")?,
+    ));
+
+    // Bind endpoint
     let bind_addr: SocketAddr = format!("{}:{}", args.bind, args.port).parse()?;
+    let endpoint = quinn::Endpoint::server(server_config, bind_addr)
+        .context("Failed to bind QUIC endpoint")?;
 
-    // Create UDP socket
-    let socket = UdpSocket::bind(bind_addr).context("Failed to bind UDP socket")?;
-    socket
-        .set_nonblocking(true)
-        .context("Failed to set socket nonblocking")?;
-
-    info!("Listening on {}", bind_addr);
-
-    // Create QUIC config
-    let mut config = Config::new().context("Failed to create QUIC config")?;
-
-    // Set TLS config using file paths
-    let cert_str = cert_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid cert path"))?;
-    let key_str = key_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid key path"))?;
-
-    let tls_config = tquic::TlsConfig::new_server_config(
-        cert_str,
-        key_str,
-        vec![b"h3".to_vec()], // ALPN
-        false,                 // verify peer
-    )
-    .context("Failed to create TLS config")?;
-
-    config.set_tls_config(tls_config);
-
-    // Basic QUIC settings
-    config.set_max_idle_timeout(30_000); // 30 seconds
-    config.set_initial_max_data(10_000_000);
-    config.set_initial_max_stream_data_bidi_local(1_000_000);
-    config.set_initial_max_stream_data_bidi_remote(1_000_000);
-    config.set_initial_max_streams_bidi(100);
-
-    // Multipath settings
-    if args.multipath {
-        config.enable_multipath(true);
-        config.set_multipath_algorithm(MultipathAlgorithm::MinRtt);
-        info!("Multipath QUIC enabled");
-    }
-
-    // Create handler
-    let _handler = ServerHandler::new(args.root.clone());
-
-    info!("Server ready. Press Ctrl+C to stop.");
+    info!("Listening on https://{}", bind_addr);
     info!("");
-    info!("To test with curl (requires HTTP/3 support):");
+    info!("Test with:");
     info!("  curl --http3-only -k https://localhost:{}/", args.port);
     info!("");
-    info!("Note: Most browsers need configuration to accept self-signed certs for QUIC.");
-    info!("Consider using --cert and --key with properly signed certificates for testing.");
 
-    // Simple event loop - receive and log packets
-    // Full tquic integration requires their socket wrapper and endpoint
-    let mut buf = vec![0u8; 65535];
+    let root = args.root.clone();
 
+    // Accept connections
+    while let Some(incoming) = endpoint.accept().await {
+        let root = root.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = handle_connection(incoming, root).await {
+                warn!("Connection error: {:?}", e);
+            }
+        });
+    }
+
+    Ok(())
+}
+
+async fn handle_connection(incoming: quinn::Incoming, root: PathBuf) -> Result<()> {
+    let connection = incoming.await.context("Failed to accept connection")?;
+
+    info!(
+        "New connection from {}",
+        connection.remote_address()
+    );
+
+    // Create H3 connection
+    let mut h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(connection))
+        .await
+        .context("Failed to create H3 connection")?;
+
+    // Handle requests
     loop {
-        match socket.recv_from(&mut buf) {
-            Ok((len, from)) => {
-                debug!("Received {} bytes from {}", len, from);
-                // TODO: Full tquic endpoint integration
-                // For now, this demonstrates the socket is receiving QUIC packets
+        match h3_conn.accept().await {
+            Ok(Some(resolver)) => {
+                let root = root.clone();
+
+                tokio::spawn(async move {
+                    // Resolve the request to get headers and stream
+                    match resolver.resolve_request().await {
+                        Ok((request, stream)) => {
+                            if let Err(e) = handle_request(request, stream, root).await {
+                                warn!("Request error: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to resolve request: {:?}", e);
+                        }
+                    }
+                });
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(10));
+            Ok(None) => {
+                debug!("Connection closed gracefully");
+                break;
             }
             Err(e) => {
-                error!("Socket error: {}", e);
+                // Connection closed with NO_ERROR is normal (client done)
+                debug!("Connection ended: {:?}", e);
+                break;
             }
         }
     }
+
+    Ok(())
 }
 
-/// Handler for server-side QUIC connections.
-struct ServerHandler {
+async fn handle_request<S>(
+    request: Request<()>,
+    mut stream: RequestStream<S, Bytes>,
     root: PathBuf,
-    #[allow(dead_code)]
-    connections: HashMap<u64, ConnectionState>,
+) -> Result<()>
+where
+    S: BidiStream<Bytes>,
+{
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+
+    info!("{} {}", method, path);
+
+    // Only handle GET requests
+    if method != http::Method::GET {
+        let response = Response::builder()
+            .status(StatusCode::METHOD_NOT_ALLOWED)
+            .body(())
+            .unwrap();
+
+        stream.send_response(response).await?;
+        stream.send_data(Bytes::from("Method Not Allowed")).await?;
+        stream.finish().await?;
+        return Ok(());
+    }
+
+    // Serve file
+    let (status, content_type, body) = serve_file(&root, &path);
+
+    let response = Response::builder()
+        .status(status)
+        .header("content-type", content_type)
+        .header("content-length", body.len().to_string())
+        .body(())
+        .unwrap();
+
+    stream.send_response(response).await?;
+
+    // Send body in chunks
+    const CHUNK_SIZE: usize = 16384;
+    for chunk in body.chunks(CHUNK_SIZE) {
+        stream.send_data(Bytes::copy_from_slice(chunk)).await?;
+    }
+
+    // Finish the stream - ignore errors if client already closed
+    // (client may close after receiving all data, which is normal)
+    if let Err(e) = stream.finish().await {
+        debug!("Stream finish: {} (client may have closed)", e);
+    }
+
+    debug!("{} {} -> {} ({} bytes)", method, path, status.as_u16(), body.len());
+
+    Ok(())
 }
 
-#[allow(dead_code)]
-struct ConnectionState {
-    h3_conn: Option<Http3Connection>,
-    pending_responses: HashMap<u64, PendingResponse>,
-}
+fn serve_file(root: &PathBuf, path: &str) -> (StatusCode, &'static str, Vec<u8>) {
+    // Normalize path
+    let path = if path == "/" { "/index.html" } else { path };
+    let path = path.trim_start_matches('/');
 
-#[allow(dead_code)]
-struct PendingResponse {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
-    body_sent: usize,
-}
+    // Prevent directory traversal
+    if path.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            b"Bad Request".to_vec(),
+        );
+    }
 
-impl ServerHandler {
-    fn new(root: PathBuf) -> Self {
-        Self {
-            root,
-            connections: HashMap::new(),
+    let file_path = root.join(path);
+
+    // Check if file exists
+    if !file_path.exists() || !file_path.is_file() {
+        debug!("404: {:?}", file_path);
+        return (
+            StatusCode::NOT_FOUND,
+            "text/plain",
+            b"Not Found".to_vec(),
+        );
+    }
+
+    // Read file
+    match fs::read(&file_path) {
+        Ok(contents) => {
+            let mime = mime_guess::from_path(&file_path)
+                .first_or_octet_stream();
+
+            let content_type = match mime.type_().as_str() {
+                "text" => match mime.subtype().as_str() {
+                    "html" => "text/html; charset=utf-8",
+                    "css" => "text/css; charset=utf-8",
+                    "javascript" => "text/javascript; charset=utf-8",
+                    "plain" => "text/plain; charset=utf-8",
+                    _ => "text/plain; charset=utf-8",
+                },
+                "application" => match mime.subtype().as_str() {
+                    "javascript" => "application/javascript; charset=utf-8",
+                    "json" => "application/json; charset=utf-8",
+                    _ => "application/octet-stream",
+                },
+                "image" => match mime.subtype().as_str() {
+                    "png" => "image/png",
+                    "jpeg" => "image/jpeg",
+                    "gif" => "image/gif",
+                    "svg+xml" => "image/svg+xml",
+                    "webp" => "image/webp",
+                    _ => "application/octet-stream",
+                },
+                _ => "application/octet-stream",
+            };
+
+            (StatusCode::OK, content_type, contents)
         }
-    }
-
-    #[allow(dead_code)]
-    fn serve_file(&self, path: &str) -> (u16, Vec<(String, String)>, Vec<u8>) {
-        // Normalize path
-        let path = if path == "/" { "/index.html" } else { path };
-        let path = path.trim_start_matches('/');
-
-        // Prevent directory traversal
-        if path.contains("..") {
-            return (
-                400,
-                vec![("content-type".into(), "text/plain".into())],
-                b"Bad Request".to_vec(),
-            );
+        Err(e) => {
+            error!("Failed to read file {:?}: {}", file_path, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "text/plain",
+                b"Internal Server Error".to_vec(),
+            )
         }
-
-        let file_path = self.root.join(path);
-
-        // Check if file exists
-        if !file_path.exists() || !file_path.is_file() {
-            debug!("404: {:?}", file_path);
-            return (
-                404,
-                vec![("content-type".into(), "text/plain".into())],
-                b"Not Found".to_vec(),
-            );
-        }
-
-        // Read file
-        match fs::read(&file_path) {
-            Ok(contents) => {
-                let mime = mime_guess::from_path(&file_path)
-                    .first_or_octet_stream()
-                    .to_string();
-
-                debug!("200: {:?} ({}, {} bytes)", file_path, mime, contents.len());
-
-                (
-                    200,
-                    vec![
-                        ("content-type".into(), mime),
-                        ("content-length".into(), contents.len().to_string()),
-                    ],
-                    contents,
-                )
-            }
-            Err(e) => {
-                error!("Failed to read file {:?}: {}", file_path, e);
-                (
-                    500,
-                    vec![("content-type".into(), "text/plain".into())],
-                    b"Internal Server Error".to_vec(),
-                )
-            }
-        }
-    }
-}
-
-impl TransportHandler for ServerHandler {
-    fn on_conn_created(&mut self, conn: &mut Connection) {
-        let conn_id = conn.trace_id();
-        info!("Connection created: {}", conn_id);
-    }
-
-    fn on_conn_established(&mut self, conn: &mut Connection) {
-        let conn_id = conn.trace_id();
-        info!("Connection established: {}", conn_id);
-
-        // Initialize H3 connection
-        if conn.application_proto() == b"h3" {
-            if let Ok(h3_config) = Http3Config::new() {
-                if let Ok(_h3_conn) = Http3Connection::new_with_quic_conn(conn, &h3_config) {
-                    debug!("H3 connection initialized");
-                }
-            }
-        }
-    }
-
-    fn on_conn_closed(&mut self, conn: &mut Connection) {
-        let conn_id = conn.trace_id();
-        info!("Connection closed: {}", conn_id);
-    }
-
-    fn on_stream_created(&mut self, _conn: &mut Connection, stream_id: u64) {
-        debug!("Stream {} created", stream_id);
-    }
-
-    fn on_stream_readable(&mut self, _conn: &mut Connection, stream_id: u64) {
-        debug!("Stream {} readable", stream_id);
-    }
-
-    fn on_stream_writable(&mut self, _conn: &mut Connection, stream_id: u64) {
-        debug!("Stream {} writable", stream_id);
-    }
-
-    fn on_stream_closed(&mut self, _conn: &mut Connection, stream_id: u64) {
-        debug!("Stream {} closed", stream_id);
-    }
-
-    fn on_new_token(&mut self, _conn: &mut Connection, _token: Vec<u8>) {
-        debug!("New token received");
     }
 }
 
@@ -336,28 +354,25 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("index.html"), "<html>test</html>").unwrap();
 
-        let handler = ServerHandler::new(dir.path().to_path_buf());
-        let (status, headers, body) = handler.serve_file("/");
+        let (status, content_type, body) = serve_file(&dir.path().to_path_buf(), "/");
 
-        assert_eq!(status, 200);
-        assert!(headers.iter().any(|(k, v)| k == "content-type" && v.contains("html")));
+        assert_eq!(status, StatusCode::OK);
+        assert!(content_type.contains("html"));
         assert_eq!(body, b"<html>test</html>");
     }
 
     #[test]
     fn test_serve_file_not_found() {
         let dir = tempdir().unwrap();
-        let handler = ServerHandler::new(dir.path().to_path_buf());
-        let (status, _, _) = handler.serve_file("/nonexistent.txt");
-        assert_eq!(status, 404);
+        let (status, _, _) = serve_file(&dir.path().to_path_buf(), "/nonexistent.txt");
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[test]
     fn test_serve_file_directory_traversal() {
         let dir = tempdir().unwrap();
-        let handler = ServerHandler::new(dir.path().to_path_buf());
-        let (status, _, _) = handler.serve_file("/../etc/passwd");
-        assert_eq!(status, 400);
+        let (status, _, _) = serve_file(&dir.path().to_path_buf(), "/../etc/passwd");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[test]
@@ -365,11 +380,21 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("app.js"), "console.log('test')").unwrap();
 
-        let handler = ServerHandler::new(dir.path().to_path_buf());
-        let (status, headers, _) = handler.serve_file("/app.js");
+        let (status, content_type, _) = serve_file(&dir.path().to_path_buf(), "/app.js");
 
-        assert_eq!(status, 200);
-        assert!(headers.iter().any(|(k, v)| k == "content-type" && v.contains("javascript")));
+        assert_eq!(status, StatusCode::OK);
+        assert!(content_type.contains("javascript"));
+    }
+
+    #[test]
+    fn test_serve_file_css() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("style.css"), "body { color: red; }").unwrap();
+
+        let (status, content_type, _) = serve_file(&dir.path().to_path_buf(), "/style.css");
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(content_type.contains("css"));
     }
 
     #[test]
@@ -377,14 +402,7 @@ mod tests {
         let result = generate_self_signed_cert();
         assert!(result.is_ok());
 
-        let (cert_path, key_path) = result.unwrap();
-        assert!(cert_path.exists());
-        assert!(key_path.exists());
-
-        let cert_content = fs::read_to_string(&cert_path).unwrap();
-        let key_content = fs::read_to_string(&key_path).unwrap();
-
-        assert!(cert_content.contains("BEGIN CERTIFICATE"));
-        assert!(key_content.contains("BEGIN PRIVATE KEY"));
+        let (certs, _key) = result.unwrap();
+        assert_eq!(certs.len(), 1);
     }
 }

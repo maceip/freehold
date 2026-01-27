@@ -1,0 +1,37 @@
+[package]
+name = "specular-relay"
+version = "0.1.0"
+edition = "2021"
+description = "Specular relay daemon - manages eBPF reflector and registration protocol"
+
+[[bin]]
+name = "specular-relay"
+path = "src/main.rs"
+
+[dependencies]
+# eBPF
+aya = "0.13"
+aya-log = "0.2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Protocol
+specular-common = { path = "../common" }
+bincode = "1"
+ed25519-dalek = { version = "2", features = ["serde"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Utilities
+dashmap = "6"
+bytes = "1"

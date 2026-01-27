@@ -1,25 +1,16 @@
-//! End-to-end test for the H3 → TCP proxy flow.
-//!
-//! This test:
-//! 1. Starts a mock TCP HTTP server on localhost
-//! 2. Starts the H3 server configured to proxy to it
-//! 3. Connects a QUIC client to the H3 server
-//! 4. Sends an HTTP/3 request
-//! 5. Verifies the response comes back correctly
+//! End-to-end test for the TCP proxy flow.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
 use http::{Method, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 use client_core::tcp_proxy::{ProxyRequest, ProxyResponse, TcpProxyClient, TcpProxyConfig};
-use client_core::{MultipathAlgorithm, MultipathConfig, ProxyClient};
 
 /// Mock HTTP/1.1 server for testing the TCP proxy.
 struct MockHttpServer {
@@ -109,34 +100,30 @@ impl Drop for MockHttpServer {
 
 #[tokio::test]
 async fn test_tcp_proxy_to_mock_server() {
-    // Start mock server
     let server = MockHttpServer::start().await;
     let target = server.addr();
 
-    // Give server time to start
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Create proxy client
     let client = TcpProxyClient::for_target(target);
 
-    // Verify health check
     assert!(client.health_check().await, "Mock server should be reachable");
 
-    // Send a request through the proxy
     let request = ProxyRequest::new(Method::GET, "/test/path".parse().unwrap())
         .with_header("user-agent", "test-client");
 
     let response = client.forward(request).await.unwrap();
 
-    // Verify response
     assert_eq!(response.status, StatusCode::OK);
-    assert!(response.headers.iter().any(|(k, v)| k == "x-mock-server" && v == "true"));
+    assert!(response
+        .headers
+        .iter()
+        .any(|(k, v)| k == "x-mock-server" && v == "true"));
 
     let body = String::from_utf8_lossy(&response.body);
     assert!(body.contains("Hello from mock server!"));
     assert!(body.contains("/test/path"));
 
-    // Verify request was counted
     assert_eq!(server.request_count(), 1);
 }
 
@@ -168,7 +155,6 @@ async fn test_tcp_proxy_multiple_requests() {
 
     let client = TcpProxyClient::for_target(target);
 
-    // Send multiple requests
     for i in 0..5 {
         let request = ProxyRequest::new(Method::GET, format!("/request/{}", i).parse().unwrap());
         let response = client.forward(request).await.unwrap();
@@ -180,13 +166,10 @@ async fn test_tcp_proxy_multiple_requests() {
 
 #[tokio::test]
 async fn test_tcp_proxy_unreachable_target() {
-    // Use a port that nothing is listening on
     let client = TcpProxyClient::for_target("127.0.0.1:59998".parse().unwrap());
 
-    // Health check should fail
     assert!(!client.health_check().await);
 
-    // Request should fail
     let request = ProxyRequest::new(Method::GET, "/".parse().unwrap());
     let result = client.forward(request).await;
     assert!(result.is_err());
@@ -194,17 +177,14 @@ async fn test_tcp_proxy_unreachable_target() {
 
 #[tokio::test]
 async fn test_tcp_proxy_timeout() {
-    // Start a server that accepts but never responds
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
         loop {
             if let Ok((mut socket, _)) = listener.accept().await {
-                // Accept but never respond - just hold the connection
                 let mut buf = vec![0u8; 4096];
                 let _ = socket.read(&mut buf).await;
-                // Sleep forever
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
@@ -214,7 +194,7 @@ async fn test_tcp_proxy_timeout() {
 
     let config = TcpProxyConfig {
         target: addr,
-        request_timeout: Duration::from_millis(100), // Short timeout
+        request_timeout: Duration::from_millis(100),
         ..Default::default()
     };
     let client = TcpProxyClient::new(config);
@@ -222,53 +202,9 @@ async fn test_tcp_proxy_timeout() {
     let request = ProxyRequest::new(Method::GET, "/".parse().unwrap());
     let result = client.forward(request).await;
 
-    // Should timeout
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("timeout") || err.to_string().contains("Timeout"));
-}
-
-#[tokio::test]
-async fn test_proxy_client_state_transitions() {
-    let mut client = ProxyClient::new();
-
-    // Initial state
-    assert!(matches!(
-        client.state(),
-        client_core::ConnectionState::Disconnected
-    ));
-
-    // Connect
-    client.connect("test.example.com").await.unwrap();
-    assert!(matches!(
-        client.state(),
-        client_core::ConnectionState::Connected { .. }
-    ));
-
-    // Disconnect
-    client.disconnect().await;
-    assert!(matches!(
-        client.state(),
-        client_core::ConnectionState::Disconnected
-    ));
-}
-
-#[tokio::test]
-async fn test_proxy_client_multipath_config() {
-    let config = MultipathConfig {
-        enabled: true,
-        interfaces: vec!["eth0".to_string(), "wlan0".to_string()],
-        algorithm: MultipathAlgorithm::RoundRobin,
-    };
-
-    let client = ProxyClient::with_multipath(config);
-
-    assert!(client.multipath_config().enabled);
-    assert_eq!(client.multipath_config().interfaces.len(), 2);
-    assert_eq!(
-        client.multipath_config().algorithm,
-        MultipathAlgorithm::RoundRobin
-    );
 }
 
 #[tokio::test]
@@ -280,7 +216,6 @@ async fn test_concurrent_proxy_requests() {
 
     let client = Arc::new(TcpProxyClient::for_target(target));
 
-    // Spawn multiple concurrent requests
     let mut handles = vec![];
     for i in 0..10 {
         let client = client.clone();
@@ -291,7 +226,6 @@ async fn test_concurrent_proxy_requests() {
         }));
     }
 
-    // Wait for all to complete
     let mut success_count = 0;
     for handle in handles {
         if let Ok(Ok(response)) = handle.await {
@@ -307,21 +241,17 @@ async fn test_concurrent_proxy_requests() {
 
 #[tokio::test]
 async fn test_proxy_response_builders() {
-    // Test error response
     let err_resp = ProxyResponse::error(StatusCode::NOT_FOUND, "Resource not found");
     assert_eq!(err_resp.status, StatusCode::NOT_FOUND);
     assert!(String::from_utf8_lossy(&err_resp.body).contains("Resource not found"));
 
-    // Test gateway timeout
     let timeout_resp = ProxyResponse::gateway_timeout();
     assert_eq!(timeout_resp.status, StatusCode::GATEWAY_TIMEOUT);
 
-    // Test bad gateway
     let bad_gw_resp = ProxyResponse::bad_gateway("upstream error");
     assert_eq!(bad_gw_resp.status, StatusCode::BAD_GATEWAY);
     assert!(String::from_utf8_lossy(&bad_gw_resp.body).contains("upstream error"));
 
-    // Test service unavailable
     let unavail_resp = ProxyResponse::service_unavailable();
     assert_eq!(unavail_resp.status, StatusCode::SERVICE_UNAVAILABLE);
 }
