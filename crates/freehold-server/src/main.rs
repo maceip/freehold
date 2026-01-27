@@ -452,11 +452,19 @@ async fn main() -> Result<()> {
         .context("attach XDP to interface")?;
     info!("XDP attached to {}", interface);
 
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", port)).context("bind UDP socket")?;
+    // Bind to anycast IP so responses come from the same IP clients contacted
+    // This is critical for NAT hole-punching to work
+    let bind_addr = config
+        .anycast
+        .primary_ip
+        .map(|ip| format!("{}:{}", ip, port))
+        .unwrap_or_else(|| format!("0.0.0.0:{}", port));
+
+    let socket = UdpSocket::bind(&bind_addr).context("bind UDP socket")?;
     socket
         .set_nonblocking(true)
         .context("set socket nonblocking")?;
-    info!("Listening on 0.0.0.0:{}", port);
+    info!("Listening on {}", bind_addr);
 
     let quotas = Arc::new(RwLock::new(QuotaTracker::default()));
 
