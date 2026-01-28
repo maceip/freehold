@@ -13,13 +13,13 @@ use tracing::info;
 #[derive(Parser)]
 #[command(name = "freehold", about = "Expose your service through Freehold")]
 struct Args {
-    /// Relay server address
+    /// Relay server address (hostname:port or ip:port)
     #[clap(short, long, default_value = "freehold.lit.app:9999")]
-    relay: SocketAddr,
+    relay: String,
 
-    /// Port to claim on the relay
+    /// Port to claim on the relay (random if not specified)
     #[clap(short, long)]
-    port: u16,
+    port: Option<u16>,
 
     /// Auto-discover and register with neighbors
     #[clap(long, default_value = "true")]
@@ -69,18 +69,38 @@ async fn main() -> Result<()> {
         let backend = args.backend.ok_or_else(|| {
             anyhow::anyhow!("--backend is required in --local mode")
         })?;
+        let port = args.port.ok_or_else(|| {
+            anyhow::anyhow!("--port is required in --local mode")
+        })?;
         info!("Starting Freehold in local mode (H3 proxy only)");
-        return run_local_h3_proxy(args, backend).await;
+        return run_local_h3_proxy(args, port, backend).await;
     }
 
-    info!("Starting Freehold - claiming port {} via {}", args.port, args.relay);
+    // Resolve relay address (supports both hostname:port and ip:port)
+    let relay_addr = tokio::net::lookup_host(&args.relay)
+        .await
+        .context(format!("Failed to resolve relay address: {}", args.relay))?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No addresses found for relay: {}", args.relay))?;
+
+    // Determine port - if not specified, start demo HTTP server on random port
+    let (port, _demo_server) = if let Some(p) = args.port {
+        (p, None)
+    } else {
+        // Demo mode: start embedded HTTP server on random port
+        let (server, port) = start_demo_http_server().await?;
+        info!("Demo mode: started HTTP server on port {}", port);
+        (port, Some(server))
+    };
+
+    info!("Starting Freehold - claiming port {} via {} ({})", port, args.relay, relay_addr);
 
     // Determine if we're in H3 proxy mode
     if let Some(backend) = args.backend {
-        run_with_h3_proxy(args, backend, status_tx, status_rx).await
+        run_with_h3_proxy(args, relay_addr, port, backend, status_tx, status_rx).await
     } else {
         // Registration-only mode
-        let engine = Engine::new(args.relay, args.port, args.discover, status_tx)?;
+        let engine = Engine::new(relay_addr, port, args.discover, status_tx)?;
 
         if args.headless {
             run_headless(engine, status_rx).await
@@ -90,14 +110,48 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Start a simple demo HTTP server on a random port
+async fn start_demo_http_server() -> Result<(tokio::task::JoinHandle<()>, u16)> {
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = TcpListener::bind("0.0.0.0:0").await?;
+    let port = listener.local_addr()?.port();
+
+    let handle = tokio::spawn(async move {
+        loop {
+            if let Ok((mut stream, addr)) = listener.accept().await {
+                info!("Demo server: connection from {}", addr);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf).await;
+
+                    let response = "HTTP/1.1 200 OK\r\n\
+                        Content-Type: text/html\r\n\
+                        Content-Length: 147\r\n\
+                        \r\n\
+                        <html><body style=\"font-family:system-ui;text-align:center;padding:50px\">\
+                        <h1>Freehold Demo</h1>\
+                        <p>Your service is reachable!</p>\
+                        </body></html>";
+
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        }
+    });
+
+    Ok((handle, port))
+}
+
 /// Run in local mode (H3 proxy only, no relay registration)
-async fn run_local_h3_proxy(args: Args, backend: SocketAddr) -> Result<()> {
+async fn run_local_h3_proxy(args: Args, port: u16, backend: SocketAddr) -> Result<()> {
     use freehold_client_core::{
         generate_self_signed_cert, H3Proxy, H3ProxyConfig, CertificateDer,
     };
 
     let h3_bind = args.h3_bind.unwrap_or_else(|| {
-        format!("0.0.0.0:{}", args.port).parse().unwrap()
+        format!("0.0.0.0:{}", port).parse().unwrap()
     });
 
     info!("H3 proxy (local): {} -> backend {}", h3_bind, backend);
@@ -125,7 +179,7 @@ async fn run_local_h3_proxy(args: Args, backend: SocketAddr) -> Result<()> {
     // Clone certs for TCP Alt-Svc announcer
     let tcp_certs = certs.clone();
     let tcp_key = key.clone_key();
-    let tcp_port = args.port;
+    let tcp_port = port;
 
     let proxy = H3Proxy::new(H3ProxyConfig {
         bind_addr: h3_bind,
@@ -226,6 +280,8 @@ async fn run_tcp_alt_svc_announcer(
 /// Run with H3 proxy (full service mode with relay registration)
 async fn run_with_h3_proxy(
     args: Args,
+    relay_addr: SocketAddr,
+    port: u16,
     backend: SocketAddr,
     status_tx: mpsc::Sender<StatusUpdate>,
     mut status_rx: mpsc::Receiver<StatusUpdate>,
@@ -237,7 +293,7 @@ async fn run_with_h3_proxy(
 
     // Determine H3 bind address
     let h3_bind = args.h3_bind.unwrap_or_else(|| {
-        format!("0.0.0.0:{}", args.port).parse().unwrap()
+        format!("0.0.0.0:{}", port).parse().unwrap()
     });
 
     info!(
@@ -265,8 +321,8 @@ async fn run_with_h3_proxy(
 
         Service::new(
             ServiceConfig {
-                relay: args.relay,
-                relay_port: args.port,
+                relay: relay_addr,
+                relay_port: port,
                 h3_bind,
                 backend,
                 certs,
@@ -277,8 +333,8 @@ async fn run_with_h3_proxy(
         ).context("create service with provided certs")?
     } else {
         create_service_with_self_signed_cert(
-            args.relay,
-            args.port,
+            relay_addr,
+            port,
             h3_bind,
             backend,
             &args.domain,
