@@ -356,6 +356,12 @@ async fn run_with_h3_proxy(
                 StatusUpdate::Error(e) => {
                     info!("Error: {}", e);
                 }
+                StatusUpdate::Traffic { sent, received } => {
+                    tracing::debug!("Traffic: sent {} received {}", sent, received);
+                }
+                StatusUpdate::PortChanged { port } => {
+                    info!("Port changed to {}", port);
+                }
             }
         }
     });

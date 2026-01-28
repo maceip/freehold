@@ -51,6 +51,14 @@ mod linux_impl {
                     StatusUpdate::Error(e) => {
                         info!("Error: {}", e);
                     }
+                    StatusUpdate::Traffic { sent, received } => {
+                        // TODO: Display traffic stats in UI
+                        let _ = (sent, received);
+                    }
+                    StatusUpdate::PortChanged { port } => {
+                        info!("Port changed to {}", port);
+                        STORED_PORT.store(port, Ordering::Relaxed);
+                    }
                 }
             }
         });

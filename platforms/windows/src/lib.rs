@@ -4,14 +4,14 @@
 compile_error!("freehold-platform-windows can only be compiled for Windows");
 
 use anyhow::Result;
-use freehold_client_core::{Engine, StatusUpdate};
+use freehold_client_core::{Engine, EngineCommand, StatusUpdate};
 use tokio::sync::mpsc;
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use anyhow::{anyhow, Result};
-    use freehold_client_core::{RelayState, StatusUpdate};
-    use std::sync::atomic::{AtomicU16, Ordering};
+    use freehold_client_core::{EngineCommand, RelayState, StatusUpdate};
+    use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
     use std::sync::Mutex;
     use tokio::sync::mpsc;
     use tracing::info;
@@ -30,16 +30,157 @@ mod windows_impl {
     const ID_TRAY_ICON: u32 = 1;
     const IDM_STATUS: u32 = 99;
     const IDM_PORT: u32 = 100;
-    const IDM_EXIT: u32 = 102;
+    const IDM_TRAFFIC: u32 = 101;
+    const IDM_NEW_ENDPOINT: u32 = 103;
+    const IDM_EXIT: u32 = 104;
 
     static CURRENT_STATE: Mutex<RelayState> = Mutex::new(RelayState::Disconnected);
     static CURRENT_PORT: AtomicU16 = AtomicU16::new(0);
+    static BYTES_SENT: AtomicU64 = AtomicU64::new(0);
+    static BYTES_RECEIVED: AtomicU64 = AtomicU64::new(0);
     static MAIN_HWND: Mutex<Option<isize>> = Mutex::new(None);
+    static COMMAND_TX: Mutex<Option<mpsc::Sender<EngineCommand>>> = Mutex::new(None);
 
-    pub fn run_ui(mut status_rx: mpsc::Receiver<StatusUpdate>, port: u16) -> Result<()> {
+    // Custom icon state
+    static ICON_CONNECTED: Mutex<Option<HICON>> = Mutex::new(None);
+    static ICON_DISCONNECTED: Mutex<Option<HICON>> = Mutex::new(None);
+    static ICON_PENDING: Mutex<Option<HICON>> = Mutex::new(None);
+
+    /// Create a simple colored circle icon
+    unsafe fn create_status_icon(color: COLORREF) -> Result<HICON> {
+        let size = 16i32;
+
+        // Create device context
+        let screen_dc = GetDC(None);
+        let mem_dc = CreateCompatibleDC(Some(screen_dc));
+
+        // Create bitmap
+        let bitmap = CreateCompatibleBitmap(screen_dc, size, size);
+        let old_bitmap = SelectObject(mem_dc, bitmap);
+
+        // Fill with transparent color (magenta = transparent in icons)
+        let brush = CreateSolidBrush(COLORREF(0x00FF00FF)); // Magenta
+        let rect = RECT { left: 0, top: 0, right: size, bottom: size };
+        FillRect(mem_dc, &rect, brush);
+        let _ = DeleteObject(brush);
+
+        // Draw filled circle
+        let brush = CreateSolidBrush(color);
+        let pen = CreatePen(PS_SOLID, 1, color);
+        let old_brush = SelectObject(mem_dc, brush);
+        let old_pen = SelectObject(mem_dc, pen);
+
+        Ellipse(mem_dc, 1, 1, size - 1, size - 1);
+
+        SelectObject(mem_dc, old_brush);
+        SelectObject(mem_dc, old_pen);
+        let _ = DeleteObject(brush);
+        let _ = DeleteObject(pen);
+
+        // Create mask bitmap (1-bit)
+        let mask_bitmap = CreateBitmap(size, size, 1, 1, None);
+        let mask_dc = CreateCompatibleDC(Some(screen_dc));
+        let old_mask = SelectObject(mask_dc, mask_bitmap);
+
+        // Fill mask with white (transparent)
+        let white_brush = CreateSolidBrush(COLORREF(0x00FFFFFF));
+        FillRect(mask_dc, &rect, white_brush);
+        let _ = DeleteObject(white_brush);
+
+        // Draw black circle on mask (opaque area)
+        let black_brush = CreateSolidBrush(COLORREF(0x00000000));
+        let black_pen = CreatePen(PS_SOLID, 1, COLORREF(0x00000000));
+        let old_mask_brush = SelectObject(mask_dc, black_brush);
+        let old_mask_pen = SelectObject(mask_dc, black_pen);
+
+        Ellipse(mask_dc, 1, 1, size - 1, size - 1);
+
+        SelectObject(mask_dc, old_mask_brush);
+        SelectObject(mask_dc, old_mask_pen);
+        let _ = DeleteObject(black_brush);
+        let _ = DeleteObject(black_pen);
+
+        SelectObject(mem_dc, old_bitmap);
+        SelectObject(mask_dc, old_mask);
+
+        // Create icon
+        let icon_info = ICONINFO {
+            fIcon: BOOL::from(true),
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: mask_bitmap,
+            hbmColor: bitmap,
+        };
+
+        let icon = CreateIconIndirect(&icon_info)?;
+
+        // Cleanup
+        let _ = DeleteObject(bitmap);
+        let _ = DeleteObject(mask_bitmap);
+        DeleteDC(mem_dc);
+        DeleteDC(mask_dc);
+        ReleaseDC(None, screen_dc);
+
+        Ok(icon)
+    }
+
+    /// Initialize status icons
+    unsafe fn init_icons() -> Result<()> {
+        // Green for connected
+        let connected = create_status_icon(COLORREF(0x0000FF00))?; // Green (BGR)
+        *ICON_CONNECTED.lock().unwrap() = Some(connected);
+
+        // Red for disconnected
+        let disconnected = create_status_icon(COLORREF(0x000000FF))?; // Red (BGR)
+        *ICON_DISCONNECTED.lock().unwrap() = Some(disconnected);
+
+        // Yellow/Orange for pending
+        let pending = create_status_icon(COLORREF(0x0000A5FF))?; // Orange (BGR)
+        *ICON_PENDING.lock().unwrap() = Some(pending);
+
+        Ok(())
+    }
+
+    /// Get icon for current state
+    unsafe fn get_state_icon(state: RelayState) -> HICON {
+        match state {
+            RelayState::Connected => {
+                ICON_CONNECTED.lock().unwrap().unwrap_or(HICON::default())
+            }
+            RelayState::Pending => {
+                ICON_PENDING.lock().unwrap().unwrap_or(HICON::default())
+            }
+            RelayState::Disconnected => {
+                ICON_DISCONNECTED.lock().unwrap().unwrap_or(HICON::default())
+            }
+        }
+    }
+
+    /// Format bytes to human readable string
+    fn format_bytes(bytes: u64) -> String {
+        if bytes < 1024 {
+            format!("{} B", bytes)
+        } else if bytes < 1024 * 1024 {
+            format!("{:.1} KB", bytes as f64 / 1024.0)
+        } else if bytes < 1024 * 1024 * 1024 {
+            format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+        }
+    }
+
+    pub fn run_ui(
+        mut status_rx: mpsc::Receiver<StatusUpdate>,
+        command_tx: mpsc::Sender<EngineCommand>,
+        port: u16,
+    ) -> Result<()> {
         CURRENT_PORT.store(port, Ordering::Relaxed);
+        *COMMAND_TX.lock().unwrap() = Some(command_tx);
 
         unsafe {
+            // Initialize icons
+            init_icons()?;
+
             let instance = GetModuleHandleW(None)?;
 
             let class_name = w!("FreeholdWindowClass");
@@ -97,6 +238,17 @@ mod windows_impl {
                             StatusUpdate::Error(e) => {
                                 info!("Error: {}", e);
                             }
+                            StatusUpdate::Traffic { sent, received } => {
+                                BYTES_SENT.store(sent, Ordering::Relaxed);
+                                BYTES_RECEIVED.store(received, Ordering::Relaxed);
+                            }
+                            StatusUpdate::PortChanged { port } => {
+                                info!("Port changed to {}", port);
+                                CURRENT_PORT.store(port, Ordering::Relaxed);
+                                // Update tray icon
+                                let hwnd = HWND(hwnd_raw as *mut _);
+                                let _ = PostMessageW(Some(hwnd), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
+                            }
                         }
                     }
                 });
@@ -133,7 +285,7 @@ mod windows_impl {
             uID: ID_TRAY_ICON,
             uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
             uCallbackMessage: WM_TRAYICON,
-            hIcon: LoadIconW(None, IDI_APPLICATION)?,
+            hIcon: get_state_icon(state),
             ..Default::default()
         };
 
@@ -164,7 +316,8 @@ mod windows_impl {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: ID_TRAY_ICON,
-            uFlags: NIF_TIP,
+            uFlags: NIF_TIP | NIF_ICON,
+            hIcon: get_state_icon(state),
             ..Default::default()
         };
 
@@ -193,13 +346,15 @@ mod windows_impl {
     unsafe fn show_context_menu(hwnd: HWND) {
         let state = *CURRENT_STATE.lock().unwrap();
         let port = CURRENT_PORT.load(Ordering::Relaxed);
+        let sent = BYTES_SENT.load(Ordering::Relaxed);
+        let received = BYTES_RECEIVED.load(Ordering::Relaxed);
 
         let menu = CreatePopupMenu().unwrap();
 
         let status_text = match state {
-            RelayState::Connected => w!("Status: Connected"),
-            RelayState::Pending => w!("Status: Connecting..."),
-            RelayState::Disconnected => w!("Status: Disconnected"),
+            RelayState::Connected => w!("● Connected"),
+            RelayState::Pending => w!("◐ Connecting..."),
+            RelayState::Disconnected => w!("○ Disconnected"),
         };
 
         AppendMenuW(menu, MF_STRING | MF_GRAYED, IDM_STATUS as usize, status_text).unwrap();
@@ -213,6 +368,21 @@ mod windows_impl {
         )
         .unwrap();
 
+        let traffic_str: Vec<u16> = format!(
+            "↑ {}  ↓ {}\0",
+            format_bytes(sent),
+            format_bytes(received)
+        ).encode_utf16().collect();
+        AppendMenuW(
+            menu,
+            MF_STRING | MF_GRAYED,
+            IDM_TRAFFIC as usize,
+            PCWSTR(traffic_str.as_ptr()),
+        )
+        .unwrap();
+
+        AppendMenuW(menu, MF_SEPARATOR, 0, None).unwrap();
+        AppendMenuW(menu, MF_STRING, IDM_NEW_ENDPOINT as usize, w!("Get New Endpoint")).unwrap();
         AppendMenuW(menu, MF_SEPARATOR, 0, None).unwrap();
         AppendMenuW(menu, MF_STRING, IDM_EXIT as usize, w!("Exit")).unwrap();
 
@@ -243,8 +413,19 @@ mod windows_impl {
             }
             WM_COMMAND => {
                 let cmd = (wparam.0 & 0xFFFF) as u32;
-                if cmd == IDM_EXIT {
-                    PostQuitMessage(0);
+                match cmd {
+                    IDM_NEW_ENDPOINT => {
+                        if let Some(ref tx) = *COMMAND_TX.lock().unwrap() {
+                            let _ = tx.blocking_send(EngineCommand::NewEndpoint);
+                        }
+                    }
+                    IDM_EXIT => {
+                        if let Some(ref tx) = *COMMAND_TX.lock().unwrap() {
+                            let _ = tx.blocking_send(EngineCommand::Shutdown);
+                        }
+                        PostQuitMessage(0);
+                    }
+                    _ => {}
                 }
                 LRESULT(0)
             }
@@ -261,6 +442,12 @@ mod windows_impl {
 pub async fn run(mut engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) -> Result<()> {
     let port = engine.port();
 
+    // Create command channel
+    let (cmd_tx, cmd_rx) = mpsc::channel::<EngineCommand>(32);
+
+    // Set command receiver on engine
+    engine.set_command_rx(cmd_rx);
+
     // Spawn engine
     let engine_handle = tokio::spawn(async move {
         engine.run().await
@@ -270,7 +457,7 @@ pub async fn run(mut engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) ->
     {
         // Run Windows UI on separate thread (blocking)
         let ui_handle = std::thread::spawn(move || {
-            windows_impl::run_ui(status_rx, port)
+            windows_impl::run_ui(status_rx, cmd_tx, port)
         });
 
         ui_handle.join().map_err(|_| anyhow::anyhow!("UI thread panicked"))??;

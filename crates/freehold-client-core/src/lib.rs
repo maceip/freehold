@@ -39,6 +39,19 @@ pub enum StatusUpdate {
     RelayState { addr: SocketAddr, state: RelayState },
     NeighborDiscovered(Ipv4Addr),
     Error(String),
+    /// Traffic stats update (bytes sent, bytes received)
+    Traffic { sent: u64, received: u64 },
+    /// Port changed (new endpoint requested)
+    PortChanged { port: u16 },
+}
+
+/// Command sent from UI to engine
+#[derive(Debug, Clone)]
+pub enum EngineCommand {
+    /// Request a new endpoint (change port)
+    NewEndpoint,
+    /// Shutdown the engine
+    Shutdown,
 }
 
 /// Relay connection tracking
@@ -56,7 +69,10 @@ pub struct Engine {
     relays: Vec<Relay>,
     neighbors: HashSet<Ipv4Addr>,
     status_tx: mpsc::Sender<StatusUpdate>,
+    command_rx: Option<mpsc::Receiver<EngineCommand>>,
     auto_discover: bool,
+    bytes_sent: u64,
+    bytes_received: u64,
 }
 
 impl Engine {
@@ -81,17 +97,60 @@ impl Engine {
             }],
             neighbors: HashSet::new(),
             status_tx,
+            command_rx: None,
             auto_discover,
+            bytes_sent: 0,
+            bytes_received: 0,
         })
+    }
+
+    /// Create a new engine with command channel
+    pub fn with_commands(
+        initial_relay: SocketAddr,
+        port: u16,
+        auto_discover: bool,
+        status_tx: mpsc::Sender<StatusUpdate>,
+        command_rx: mpsc::Receiver<EngineCommand>,
+    ) -> Result<Self> {
+        let mut engine = Self::new(initial_relay, port, auto_discover, status_tx)?;
+        engine.command_rx = Some(command_rx);
+        Ok(engine)
+    }
+
+    /// Set command receiver (allows injection after creation)
+    pub fn set_command_rx(&mut self, rx: mpsc::Receiver<EngineCommand>) {
+        self.command_rx = Some(rx);
     }
 
     /// Run the engine (blocking)
     pub async fn run(&mut self) -> Result<()> {
         let mut buf = [0u8; 1500];
+        let mut last_traffic_update = Instant::now();
+        let traffic_update_interval = std::time::Duration::from_secs(1);
 
         loop {
+            // Check for commands - collect first to avoid borrow issues
+            let commands: Vec<_> = if let Some(ref mut rx) = self.command_rx {
+                std::iter::from_fn(|| rx.try_recv().ok()).collect()
+            } else {
+                Vec::new()
+            };
+
+            for cmd in commands {
+                match cmd {
+                    EngineCommand::NewEndpoint => {
+                        self.request_new_endpoint();
+                    }
+                    EngineCommand::Shutdown => {
+                        info!("Engine shutdown requested");
+                        return Ok(());
+                    }
+                }
+            }
+
             // Process incoming
             while let Ok((len, from)) = self.socket.recv_from(&mut buf) {
+                self.bytes_received += len as u64;
                 self.process(&buf[..len], from).await;
             }
 
@@ -122,14 +181,54 @@ impl Engine {
                 }
             }
 
+            // Send traffic update periodically
+            if now.duration_since(last_traffic_update) >= traffic_update_interval {
+                let _ = self.status_tx.try_send(StatusUpdate::Traffic {
+                    sent: self.bytes_sent,
+                    received: self.bytes_received,
+                });
+                last_traffic_update = now;
+            }
+
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Request a new endpoint (change port and re-register)
+    fn request_new_endpoint(&mut self) {
+        use rand::Rng;
+
+        // Generate a new random port in the ephemeral range
+        let new_port = rand::rng().random_range(49152u16..65535u16);
+        info!("Switching to new port: {} -> {}", self.port, new_port);
+
+        self.port = new_port;
+
+        // Notify UI of port change
+        let _ = self.status_tx.try_send(StatusUpdate::PortChanged { port: new_port });
+
+        // Reset all relays to disconnected
+        for relay in &mut self.relays {
+            relay.state = RelayState::Disconnected;
+            relay.cookie = None;
+            relay.last_activity = Instant::now() - timing::HEARTBEAT_INTERVAL;
+        }
+
+        // Notify UI of relay state changes
+        for relay in &self.relays {
+            let _ = self.status_tx.try_send(StatusUpdate::RelayState {
+                addr: relay.addr,
+                state: RelayState::Disconnected,
+            });
         }
     }
 
     fn send_register(&mut self, idx: usize) {
         let msg = Message::Register { port: self.port };
+        let data = msg.to_bytes();
         let addr = self.relays[idx].addr;
-        if self.socket.send_to(&msg.to_bytes(), addr).is_ok() {
+        if self.socket.send_to(&data, addr).is_ok() {
+            self.bytes_sent += data.len() as u64;
             self.relays[idx].last_activity = Instant::now();
             debug!("REGISTER -> {}", addr);
         }
@@ -138,8 +237,10 @@ impl Engine {
     fn send_confirm(&mut self, idx: usize) {
         if let Some(cookie) = self.relays[idx].cookie {
             let msg = Message::Confirm { port: self.port, cookie };
+            let data = msg.to_bytes();
             let addr = self.relays[idx].addr;
-            if self.socket.send_to(&msg.to_bytes(), addr).is_ok() {
+            if self.socket.send_to(&data, addr).is_ok() {
+                self.bytes_sent += data.len() as u64;
                 debug!("CONFIRM -> {}", addr);
             }
         }
@@ -147,8 +248,10 @@ impl Engine {
 
     fn send_heartbeat(&mut self, idx: usize) {
         let msg = Message::Heartbeat { port: self.port };
+        let data = msg.to_bytes();
         let addr = self.relays[idx].addr;
-        if self.socket.send_to(&msg.to_bytes(), addr).is_ok() {
+        if self.socket.send_to(&data, addr).is_ok() {
+            self.bytes_sent += data.len() as u64;
             self.relays[idx].last_activity = Instant::now();
             debug!("HEARTBEAT -> {}", addr);
         }

@@ -592,6 +592,7 @@ dependencies = [
  "anyhow",
  "freehold-api",
  "freehold-h3-proxy",
+ "rand",
  "tokio",
  "tracing",
 ]

@@ -11,6 +11,7 @@ freehold-h3-proxy = { path = "../freehold-h3-proxy", optional = true }
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+rand = "0.9"
 
 [features]
 default = ["h3-proxy"]

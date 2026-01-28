@@ -214,6 +214,14 @@ mod macos_impl {
                         StatusUpdate::Error(e) => {
                             info!("Error: {}", e);
                         }
+                        StatusUpdate::Traffic { sent, received } => {
+                            // TODO: Display traffic stats in menu
+                            let _ = (sent, received);
+                        }
+                        StatusUpdate::PortChanged { port } => {
+                            info!("Port changed to {}", port);
+                            CURRENT_PORT.store(port, Ordering::Relaxed);
+                        }
                     }
                 }
             });
