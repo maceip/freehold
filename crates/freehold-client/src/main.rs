@@ -13,9 +13,9 @@ use tracing::info;
 #[derive(Parser)]
 #[command(name = "freehold", about = "Expose your service through Freehold")]
 struct Args {
-    /// Relay server address (not required in --local mode)
-    #[clap(short, long, required_unless_present = "local")]
-    relay: Option<SocketAddr>,
+    /// Relay server address
+    #[clap(short, long, default_value = "freehold.lit.app:9999")]
+    relay: SocketAddr,
 
     /// Port to claim on the relay
     #[clap(short, long)]
@@ -73,15 +73,14 @@ async fn main() -> Result<()> {
         return run_local_h3_proxy(args, backend).await;
     }
 
-    let relay = args.relay.expect("relay required when not in local mode");
-    info!("Starting Freehold - claiming port {} via {}", args.port, relay);
+    info!("Starting Freehold - claiming port {} via {}", args.port, args.relay);
 
     // Determine if we're in H3 proxy mode
     if let Some(backend) = args.backend {
-        run_with_h3_proxy(args, relay, backend, status_tx, status_rx).await
+        run_with_h3_proxy(args, backend, status_tx, status_rx).await
     } else {
         // Registration-only mode
-        let engine = Engine::new(relay, args.port, args.discover, status_tx)?;
+        let engine = Engine::new(args.relay, args.port, args.discover, status_tx)?;
 
         if args.headless {
             run_headless(engine, status_rx).await
@@ -227,7 +226,6 @@ async fn run_tcp_alt_svc_announcer(
 /// Run with H3 proxy (full service mode with relay registration)
 async fn run_with_h3_proxy(
     args: Args,
-    relay: SocketAddr,
     backend: SocketAddr,
     status_tx: mpsc::Sender<StatusUpdate>,
     mut status_rx: mpsc::Receiver<StatusUpdate>,
@@ -267,7 +265,7 @@ async fn run_with_h3_proxy(
 
         Service::new(
             ServiceConfig {
-                relay,
+                relay: args.relay,
                 relay_port: args.port,
                 h3_bind,
                 backend,
@@ -279,7 +277,7 @@ async fn run_with_h3_proxy(
         ).context("create service with provided certs")?
     } else {
         create_service_with_self_signed_cert(
-            relay,
+            args.relay,
             args.port,
             h3_bind,
             backend,
