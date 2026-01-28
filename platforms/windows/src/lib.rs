@@ -4,9 +4,8 @@
 compile_error!("freehold-platform-windows can only be compiled for Windows");
 
 use anyhow::Result;
-use freehold_client_core::{Engine, RelayState, StatusUpdate};
+use freehold_client_core::{Engine, StatusUpdate};
 use tokio::sync::mpsc;
-use tracing::info;
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
@@ -105,7 +104,7 @@ mod windows_impl {
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).into() {
-                TranslateMessage(&msg);
+                let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
 
@@ -282,7 +281,7 @@ pub async fn run(mut engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) ->
         // Fallback for non-Windows
         let mut status_rx = status_rx;
         while let Some(update) = status_rx.recv().await {
-            info!("Status: {:?}", update);
+            tracing::info!("Status: {:?}", update);
         }
     }
 
