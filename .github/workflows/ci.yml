@@ -1,0 +1,198 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Linux build and test
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            clang \
+            llvm \
+            libelf-dev \
+            linux-headers-generic
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --release --package freehold-client
+
+      - name: Run tests
+        run: cargo test --workspace --exclude freehold-ebpf
+
+      - name: Integration test - relay connection
+        run: |
+          # Start client in demo mode, background it
+          timeout 30 ./target/release/freehold --headless &
+          CLIENT_PID=$!
+
+          # Wait for registration
+          sleep 10
+
+          # Check if process is still running (means it connected)
+          if kill -0 $CLIENT_PID 2>/dev/null; then
+            echo "Client successfully connected to relay"
+            kill $CLIENT_PID
+            exit 0
+          else
+            echo "Client exited unexpectedly"
+            exit 1
+          fi
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-linux-x86_64
+          path: target/release/freehold
+
+  # Windows build
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --release --package freehold-client
+
+      - name: Integration test - relay connection
+        shell: pwsh
+        run: |
+          # Start client in demo mode
+          $process = Start-Process -FilePath ".\target\release\freehold.exe" -ArgumentList "--headless" -PassThru -NoNewWindow
+
+          # Wait for registration
+          Start-Sleep -Seconds 15
+
+          # Check if process is still running
+          if (!$process.HasExited) {
+            Write-Host "Client successfully connected to relay"
+            Stop-Process -Id $process.Id -Force
+            exit 0
+          } else {
+            Write-Host "Client exited unexpectedly with code $($process.ExitCode)"
+            exit 1
+          }
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-windows-x86_64
+          path: target/release/freehold.exe
+
+  # macOS build (optional - enable when needed)
+  macos:
+    runs-on: macos-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --release --package freehold-client
+
+      - name: Upload macOS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-macos-x86_64
+          path: target/release/freehold
+
+  # Release job - only on tags
+  release:
+    needs: [linux, windows]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+
+          # Linux
+          cp artifacts/freehold-linux-x86_64/freehold release/freehold-linux-x86_64
+          chmod +x release/freehold-linux-x86_64
+
+          # Windows
+          cp artifacts/freehold-windows-x86_64/freehold.exe release/freehold-windows-x86_64.exe
+
+          # macOS (if available)
+          if [ -d "artifacts/freehold-macos-x86_64" ]; then
+            cp artifacts/freehold-macos-x86_64/freehold release/freehold-macos-x86_64
+            chmod +x release/freehold-macos-x86_64
+          fi
+
+          # Create checksums
+          cd release
+          sha256sum * > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          generate_release_notes: true

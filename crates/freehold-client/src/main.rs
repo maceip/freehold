@@ -10,8 +10,11 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::info;
 
+mod service;
+mod update;
+
 #[derive(Parser)]
-#[command(name = "freehold", about = "Expose your service through Freehold")]
+#[command(name = "freehold", version, about = "Expose your service through Freehold")]
 struct Args {
     /// Relay server address (hostname:port or ip:port)
     #[clap(short, long, default_value = "freehold.lit.app:9999")]
@@ -53,6 +56,27 @@ struct Args {
     /// Run in local mode (H3 proxy only, no relay registration)
     #[clap(long)]
     local: bool,
+
+    // --- Service Options ---
+    /// Install Freehold as a startup service
+    #[clap(long)]
+    install: bool,
+
+    /// Uninstall Freehold startup service
+    #[clap(long)]
+    uninstall: bool,
+
+    /// Disable automatic update check on startup
+    #[clap(long)]
+    no_update: bool,
+
+    /// Check for and install updates
+    #[clap(long)]
+    update: bool,
+
+    /// Show service installation status
+    #[clap(long)]
+    status: bool,
 }
 
 #[tokio::main]
@@ -62,6 +86,40 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+
+    // Handle service commands
+    if args.install {
+        service::install()?;
+        println!("Freehold installed as startup service");
+        return Ok(());
+    }
+
+    if args.uninstall {
+        service::uninstall()?;
+        println!("Freehold uninstalled from startup");
+        return Ok(());
+    }
+
+    if args.status {
+        if service::is_installed() {
+            println!("Freehold is installed as a startup service");
+        } else {
+            println!("Freehold is not installed as a startup service");
+        }
+        return Ok(());
+    }
+
+    // Handle update command
+    if args.update {
+        update::self_update().await?;
+        return Ok(());
+    }
+
+    // Check for updates in background (unless disabled)
+    if !args.no_update {
+        update::check_update_background();
+    }
+
     let (status_tx, status_rx) = mpsc::channel(32);
 
     // Local mode: H3 proxy only, no relay registration
