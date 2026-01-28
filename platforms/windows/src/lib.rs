@@ -10,9 +10,12 @@ use tracing::info;
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::*;
+    use anyhow::{anyhow, Result};
+    use freehold_client_core::{RelayState, StatusUpdate};
     use std::sync::atomic::{AtomicU16, Ordering};
     use std::sync::Mutex;
+    use tokio::sync::mpsc;
+    use tracing::info;
     use windows::{
         core::*,
         Win32::{
@@ -46,7 +49,7 @@ mod windows_impl {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(window_proc),
-                hInstance: instance,
+                hInstance: instance.into(),
                 hCursor: LoadCursorW(None, IDC_ARROW)?,
                 hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as _),
                 lpszClassName: class_name,
@@ -66,7 +69,7 @@ mod windows_impl {
                 300,
                 None,
                 None,
-                instance,
+                Some(instance.into()),
                 None,
             )?;
 
@@ -87,7 +90,7 @@ mod windows_impl {
                                 info!("Relay {} -> {:?}", addr, state);
                                 // Post message to update tray
                                 let hwnd = HWND(hwnd_raw as *mut _);
-                                PostMessageW(hwnd, WM_UPDATE_TRAY, WPARAM(0), LPARAM(0)).ok();
+                                let _ = PostMessageW(Some(hwnd), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
                             }
                             StatusUpdate::NeighborDiscovered(ip) => {
                                 info!("Discovered neighbor: {}", ip);
@@ -138,7 +141,9 @@ mod windows_impl {
         let tip_wide: Vec<u16> = tip.encode_utf16().chain(std::iter::once(0)).collect();
         nid.szTip[..tip_wide.len().min(128)].copy_from_slice(&tip_wide[..tip_wide.len().min(128)]);
 
-        Shell_NotifyIconW(NIM_ADD, &nid)?;
+        if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
+            return Err(anyhow!("Failed to add tray icon"));
+        }
         Ok(())
     }
 
@@ -167,7 +172,9 @@ mod windows_impl {
         let tip_wide: Vec<u16> = tip.encode_utf16().chain(std::iter::once(0)).collect();
         nid.szTip[..tip_wide.len().min(128)].copy_from_slice(&tip_wide[..tip_wide.len().min(128)]);
 
-        Shell_NotifyIconW(NIM_MODIFY, &nid)?;
+        if !Shell_NotifyIconW(NIM_MODIFY, &nid).as_bool() {
+            return Err(anyhow!("Failed to update tray icon"));
+        }
         Ok(())
     }
 
@@ -178,7 +185,9 @@ mod windows_impl {
             uID: ID_TRAY_ICON,
             ..Default::default()
         };
-        Shell_NotifyIconW(NIM_DELETE, &nid)?;
+        if !Shell_NotifyIconW(NIM_DELETE, &nid).as_bool() {
+            return Err(anyhow!("Failed to remove tray icon"));
+        }
         Ok(())
     }
 
@@ -212,7 +221,7 @@ mod windows_impl {
         GetCursorPos(&mut pt).unwrap();
 
         SetForegroundWindow(hwnd).unwrap();
-        TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None).unwrap();
+        TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, None, hwnd, None).unwrap();
         DestroyMenu(menu).unwrap();
     }
 
