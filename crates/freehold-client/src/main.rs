@@ -123,6 +123,11 @@ async fn run_local_h3_proxy(args: Args, backend: SocketAddr) -> Result<()> {
         generate_self_signed_cert(&[&args.domain])?
     };
 
+    // Clone certs for TCP Alt-Svc announcer
+    let tcp_certs = certs.clone();
+    let tcp_key = key.clone_key();
+    let tcp_port = args.port;
+
     let proxy = H3Proxy::new(H3ProxyConfig {
         bind_addr: h3_bind,
         backend,
@@ -132,6 +137,14 @@ async fn run_local_h3_proxy(args: Args, backend: SocketAddr) -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
+    // Spawn TCP Alt-Svc announcer
+    let tcp_shutdown = shutdown_rx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = run_tcp_alt_svc_announcer(tcp_certs, tcp_key, tcp_port, tcp_shutdown).await {
+            tracing::error!("TCP Alt-Svc announcer error: {}", e);
+        }
+    });
+
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         info!("Shutting down...");
@@ -139,6 +152,76 @@ async fn run_local_h3_proxy(args: Args, backend: SocketAddr) -> Result<()> {
     });
 
     proxy.run(shutdown_rx).await
+}
+
+/// TCP listener that does TLS handshake and sends Alt-Svc header pointing to H3
+async fn run_tcp_alt_svc_announcer(
+    certs: Vec<freehold_client_core::CertificateDer<'static>>,
+    key: freehold_client_core::PrivateKeyDer<'static>,
+    port: u16,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use rustls::ServerConfig;
+    use tokio_rustls::TlsAcceptor;
+    use std::sync::Arc;
+
+    let tls_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("build TLS config")?;
+
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await
+        .context("bind TCP listener")?;
+
+    info!("TCP Alt-Svc announcer listening on 0.0.0.0:{}", port);
+
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    info!("TCP Alt-Svc announcer shutting down");
+                    break;
+                }
+            }
+            result = listener.accept() => {
+                let (stream, addr) = result.context("accept TCP connection")?;
+                let acceptor = acceptor.clone();
+
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(mut tls_stream) => {
+                            info!("TCP connection from {} - sending Alt-Svc", addr);
+
+                            // Read request (just consume it)
+                            let mut buf = [0u8; 4096];
+                            let _ = tls_stream.read(&mut buf).await;
+
+                            // Send response with Alt-Svc header
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\n\
+                                 Alt-Svc: h3=\":{}\" ; ma=86400\r\n\
+                                 Content-Length: 0\r\n\
+                                 Connection: close\r\n\
+                                 \r\n",
+                                port
+                            );
+
+                            let _ = tls_stream.write_all(response.as_bytes()).await;
+                            let _ = tls_stream.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::debug!("TLS handshake failed from {}: {}", addr, e);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Run with H3 proxy (full service mode with relay registration)
