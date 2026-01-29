@@ -4,7 +4,9 @@
 //! - H3/QUIC reverse proxy server (via quinn)
 //! - TCP proxy client for forwarding to local backends
 //! - Connection state management
+//! - ACME DNS-01 certificate automation
 
+pub mod acme;
 pub mod h3_server;
 pub mod tcp_proxy;
 

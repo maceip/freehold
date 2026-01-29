@@ -43,6 +43,10 @@ socket2 = { version = "0.5", features = ["all"] }
 rustc-hash = "2"
 futures-util = "0.3"
 
+# ACME for DNS-01 certificate generation
+instant-acme = "0.8"
+async-trait = "0.1"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
