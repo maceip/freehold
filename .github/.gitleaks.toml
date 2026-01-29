@@ -1,0 +1,62 @@
+# Gitleaks configuration for Freehold
+# https://github.com/gitleaks/gitleaks
+
+title = "Freehold Gitleaks Config"
+
+[extend]
+# Use the default gitleaks config as base
+useDefault = true
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+    '''\.github/.*\.md$''',
+    '''target/''',
+    '''\.git/''',
+    '''Cargo\.lock$''',
+]
+regexes = [
+    # Example patterns - test keys, placeholder values
+    '''EXAMPLE_.*''',
+    '''example\.com''',
+    '''test_key_.*''',
+    '''placeholder.*''',
+]
+
+# Additional rules for Rust-specific patterns
+[[rules]]
+id = "rust-private-key-pem"
+description = "Private key in PEM format in Rust files"
+regex = '''-----BEGIN.*PRIVATE KEY-----'''
+path = '''\.rs$'''
+tags = ["key", "private"]
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key ID"
+regex = '''AKIA[0-9A-Z]{16}'''
+tags = ["key", "aws"]
+
+[[rules]]
+id = "github-pat"
+description = "GitHub Personal Access Token"
+regex = '''ghp_[a-zA-Z0-9]{36}'''
+tags = ["key", "github"]
+
+[[rules]]
+id = "github-oauth"
+description = "GitHub OAuth Token"
+regex = '''gho_[a-zA-Z0-9]{36}'''
+tags = ["key", "github"]
+
+[[rules]]
+id = "github-fine-grained"
+description = "GitHub Fine-grained PAT"
+regex = '''github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}'''
+tags = ["key", "github"]
+
+[[rules]]
+id = "generic-secret-env"
+description = "Generic secret in environment variable style"
+regex = '''(?i)(password|secret|token|api_key|apikey)\s*[:=]\s*['"][^'"]{8,}['"]'''
+tags = ["secret", "generic"]
