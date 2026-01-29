@@ -4,6 +4,21 @@
 
 Give any device a real public IP address. Host services that browsers trust — not tunnel URLs. Works from behind CGNAT, double-NAT, or corporate firewalls.
 
+## Getting to Freehold
+
+Test the public relay without installing anything:
+
+```bash
+# Test H3 (if curl supports it)
+curl --http3 https://freehold.lit.app/
+
+# Test HTTPS
+curl https://freehold.lit.app/
+
+# Check DNS HTTPS record (H3 discovery)
+dig freehold.lit.app HTTPS +short
+```
+
 ## Quick Start
 
 ```bash
