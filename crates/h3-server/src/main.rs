@@ -12,12 +12,16 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
 use http::{Request, Response, StatusCode};
 use tracing::{debug, error, info, warn};
+
+/// Server start time for uptime calculation
+static SERVER_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 use h3::quic::BidiStream;
 use h3::server::RequestStream;
@@ -54,6 +58,9 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Record server start time
+    SERVER_START.get_or_init(Instant::now);
 
     // Install ring as the default crypto provider
     rustls::crypto::ring::default_provider()
@@ -233,7 +240,42 @@ where
 
     info!("{} {}", method, path);
 
-    // Only handle GET requests
+    // === API ROUTES ===
+
+    // Health check endpoint
+    if path == "/health" {
+        let uptime = SERVER_START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
+        let body = format!(
+            r#"{{"status":"ok","protocol":"h3","uptime_secs":{}}}"#,
+            uptime
+        );
+        return send_json_response(&mut stream, StatusCode::OK, &body).await;
+    }
+
+    // Stats endpoint - reads from stats file if available
+    if path == "/stats" {
+        let stats = read_stats_file().unwrap_or_else(|| {
+            let uptime = SERVER_START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0);
+            format!(
+                r#"{{"connections":0,"bytes_forwarded":0,"uptime_secs":{},"throughput_mbps":0}}"#,
+                uptime
+            )
+        });
+        return send_json_response(&mut stream, StatusCode::OK, &stats).await;
+    }
+
+    // Analytics beacon endpoint (accepts POST)
+    if path == "/a" {
+        if method == http::Method::POST || method == http::Method::GET {
+            // Just acknowledge - in production, you'd log this
+            debug!("Analytics beacon received");
+            return send_json_response(&mut stream, StatusCode::OK, r#"{"ok":true}"#).await;
+        }
+    }
+
+    // === STATIC FILE SERVING ===
+
+    // Only handle GET requests for static files
     if method != http::Method::GET {
         let response = Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
@@ -342,6 +384,41 @@ fn serve_file(root: &PathBuf, path: &str) -> (StatusCode, &'static str, Vec<u8>)
             )
         }
     }
+}
+
+/// Send a JSON response
+async fn send_json_response<S>(
+    stream: &mut RequestStream<S, Bytes>,
+    status: StatusCode,
+    body: &str,
+) -> Result<()>
+where
+    S: BidiStream<Bytes>,
+{
+    let response = Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .header("content-length", body.len().to_string())
+        .header("access-control-allow-origin", "*")
+        .header("cache-control", "no-cache")
+        .body(())
+        .unwrap();
+
+    stream.send_response(response).await?;
+    stream.send_data(Bytes::from(body.to_string())).await?;
+
+    if let Err(e) = stream.finish().await {
+        debug!("Stream finish: {} (client may have closed)", e);
+    }
+
+    Ok(())
+}
+
+/// Read stats from the relay's stats file (if available)
+fn read_stats_file() -> Option<String> {
+    // The relay writes stats to this file
+    let stats_path = "/tmp/freehold-stats.json";
+    fs::read_to_string(stats_path).ok()
 }
 
 #[cfg(test)]
