@@ -1,0 +1,23 @@
+{
+  "name": "freehold-iwa",
+  "version": "0.1.0",
+  "description": "Freehold Isolated Web App with QUIC/Direct Sockets support",
+  "type": "module",
+  "scripts": {
+    "build": "node index.js",
+    "bundle": "rollup -c rollup.config.mjs",
+    "keygen": "openssl genpkey -algorithm Ed25519 -out ed25519key.pem"
+  },
+  "dependencies": {
+    "base32-encode": "^2.0.0",
+    "mime": "^4.0.4",
+    "wbn": "^0.0.9",
+    "wbn-sign": "^0.2.1"
+  },
+  "devDependencies": {
+    "rollup-plugin-webbundle": "^0.2.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "dotenv": "^16.4.5",
+    "rollup": "^4.18.0"
+  }
+}

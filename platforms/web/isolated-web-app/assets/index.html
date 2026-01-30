@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freehold QUIC Client</title>
+  <link rel="manifest" href="/.well-known/manifest.webmanifest">
+  <style>
+    :root {
+      --bg-primary: #1a1a2e;
+      --bg-secondary: #16213e;
+      --accent: #0f3460;
+      --highlight: #e94560;
+      --text: #eaeaea;
+      --text-dim: #8b8b8b;
+      --success: #00d26a;
+      --error: #ff6b6b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+      background: var(--bg-primary);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--accent);
+    }
+
+    .logo {
+      font-size: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+    }
+
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: background 0.3s;
+    }
+
+    .status-indicator.connected {
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }
+
+    .status-indicator.error {
+      background: var(--error);
+    }
+
+    .status-text {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+    }
+
+    .section {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--highlight);
+    }
+
+    .connection-controls {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    label {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    input {
+      background: var(--bg-primary);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: var(--highlight);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-end;
+    }
+
+    button {
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      padding: 0.75rem 1.5rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    button:hover {
+      background: var(--highlight);
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      background: var(--highlight);
+    }
+
+    button.secondary {
+      background: transparent;
+      border: 1px solid var(--accent);
+    }
+
+    .log-container {
+      background: var(--bg-primary);
+      border-radius: 8px;
+      padding: 1rem;
+      height: 300px;
+      overflow-y: auto;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+
+    .log-entry {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .log-time {
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .log-message {
+      word-break: break-all;
+    }
+
+    .log-message.info { color: var(--text); }
+    .log-message.success { color: var(--success); }
+    .log-message.error { color: var(--error); }
+    .log-message.warn { color: #ffc107; }
+
+    .message-input {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .message-input input {
+      flex: 1;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+
+    .nav-links a {
+      color: var(--highlight);
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+
+    .nav-links a:hover {
+      text-decoration: underline;
+    }
+
+    .api-status {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+
+    .api-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      font-size: 0.8rem;
+    }
+
+    .api-badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .api-badge .dot.available { background: var(--success); }
+    .api-badge .dot.unavailable { background: var(--error); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">⬡</div>
+      <h1>Freehold QUIC Client</h1>
+    </header>
+
+    <div class="status-bar">
+      <div class="status-indicator" id="status-indicator"></div>
+      <span class="status-text" id="status-text">Disconnected</span>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Direct Sockets API Status</div>
+      <div class="api-status" id="api-status">
+        <!-- Populated by JavaScript -->
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">QUIC Connection</div>
+      <div class="connection-controls">
+        <div class="input-group">
+          <label for="server-address">Server Address</label>
+          <input type="text" id="server-address" placeholder="127.0.0.1:4433" value="127.0.0.1:4433">
+        </div>
+        <div class="btn-group">
+          <button id="btn-connect" class="primary">Connect</button>
+          <button id="btn-disconnect" class="secondary" disabled>Disconnect</button>
+        </div>
+      </div>
+      <div class="message-input" id="message-controls" style="display: none;">
+        <input type="text" id="message-input" placeholder="Enter message...">
+        <button id="btn-send">Send</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Connection Log</div>
+      <div class="log-container" id="log-container"></div>
+    </div>
+
+    <div class="nav-links">
+      <a href="/quinn.html">QUIC Test Interface</a>
+      <a href="/tcp.html">TCP Server Socket</a>
+    </div>
+  </div>
+
+  <script type="module" src="./script.js"></script>
+</body>
+</html>

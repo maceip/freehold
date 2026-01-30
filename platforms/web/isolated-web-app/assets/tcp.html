@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freehold - TCP Server Socket</title>
+  <link rel="manifest" href="/.well-known/manifest.webmanifest">
+  <style>
+    :root {
+      --bg-primary: #1a1a2e;
+      --bg-secondary: #16213e;
+      --accent: #0f3460;
+      --highlight: #e94560;
+      --text: #eaeaea;
+      --text-dim: #8b8b8b;
+      --success: #00d26a;
+      --error: #ff6b6b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+      background: var(--bg-primary);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--accent);
+    }
+
+    .logo {
+      font-size: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .panel {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--highlight);
+    }
+
+    .form-row {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .form-group {
+      flex: 1;
+      min-width: 150px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    input, select {
+      width: 100%;
+      background: var(--bg-primary);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--highlight);
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      padding: 0.75rem 1.5rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--highlight);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      background: var(--highlight);
+    }
+
+    button.outline {
+      background: transparent;
+      border: 1px solid var(--accent);
+    }
+
+    button.danger {
+      background: var(--error);
+    }
+
+    .server-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      background: var(--bg-primary);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .status-dot.running {
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }
+
+    .connections-list {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .connection-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      margin-bottom: 0.5rem;
+    }
+
+    .connection-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .connection-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.5rem;
+      background: var(--accent);
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+
+    .log-area {
+      background: var(--bg-primary);
+      border-radius: 8px;
+      padding: 1rem;
+      height: 250px;
+      overflow-y: auto;
+      font-size: 0.8rem;
+      line-height: 1.8;
+    }
+
+    .log-line {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .log-time {
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .log-content {
+      word-break: break-all;
+    }
+
+    .log-content.success { color: var(--success); }
+    .log-content.error { color: var(--error); }
+    .log-content.info { color: var(--text); }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--highlight);
+      text-decoration: none;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+
+    .back-link:hover {
+      text-decoration: underline;
+    }
+
+    .info-box {
+      background: var(--bg-primary);
+      border-left: 3px solid var(--highlight);
+      padding: 1rem;
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+
+    .info-box code {
+      background: var(--accent);
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/" class="back-link">&larr; Back to main</a>
+
+    <header>
+      <div class="logo">⬡</div>
+      <h1>TCP Server Socket</h1>
+    </header>
+
+    <div class="panel">
+      <div class="panel-title">Server Configuration</div>
+
+      <div class="server-status">
+        <div class="status-dot" id="server-status-dot"></div>
+        <span id="server-status-text">Server stopped</span>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Bind Address</label>
+          <input type="text" id="bind-address" value="0.0.0.0" placeholder="0.0.0.0">
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input type="number" id="bind-port" value="44818" min="1" max="65535">
+        </div>
+        <div class="form-group">
+          <label>Mode</label>
+          <select id="server-mode">
+            <option value="echo">Echo Server</option>
+            <option value="http">HTTP Server</option>
+            <option value="custom">Custom Handler</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button id="btn-start" class="primary">Start Server</button>
+        <button id="btn-stop" class="outline" disabled>Stop Server</button>
+      </div>
+
+      <div class="info-box">
+        <strong>Note:</strong> TCPServerSocket requires the <code>direct-sockets</code> permission.
+        This is only available in Isolated Web Apps (IWAs) with the proper manifest configuration.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Active Connections</div>
+      <div class="connections-list" id="connections-list">
+        <div style="color: var(--text-dim); text-align: center; padding: 2rem;">
+          No active connections
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Server Log</div>
+      <div class="log-area" id="log-area"></div>
+      <div class="btn-row" style="margin-top: 1rem;">
+        <button id="btn-clear" class="outline">Clear Log</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    // State
+    let serverSocket = null;
+    let connections = new Map();
+    let connectionCounter = 0;
+
+    // DOM Elements
+    const serverStatusDot = document.getElementById('server-status-dot');
+    const serverStatusText = document.getElementById('server-status-text');
+    const bindAddress = document.getElementById('bind-address');
+    const bindPort = document.getElementById('bind-port');
+    const serverMode = document.getElementById('server-mode');
+    const connectionsList = document.getElementById('connections-list');
+    const logArea = document.getElementById('log-area');
+
+    const btnStart = document.getElementById('btn-start');
+    const btnStop = document.getElementById('btn-stop');
+    const btnClear = document.getElementById('btn-clear');
+
+    /**
+     * Log message to the server log
+     */
+    function log(message, level = 'info') {
+      const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+      const entry = document.createElement('div');
+      entry.className = 'log-line';
+      entry.innerHTML = `
+        <span class="log-time">[${time}]</span>
+        <span class="log-content ${level}">${escapeHtml(message)}</span>
+      `;
+      logArea.appendChild(entry);
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    /**
+     * Update server status display
+     */
+    function updateServerStatus(running, address = '', port = '') {
+      serverStatusDot.className = `status-dot ${running ? 'running' : ''}`;
+      serverStatusText.textContent = running
+        ? `Listening on ${address}:${port}`
+        : 'Server stopped';
+
+      btnStart.disabled = running;
+      btnStop.disabled = !running;
+      bindAddress.disabled = running;
+      bindPort.disabled = running;
+      serverMode.disabled = running;
+    }
+
+    /**
+     * Update connections list display
+     */
+    function updateConnectionsList() {
+      if (connections.size === 0) {
+        connectionsList.innerHTML = `
+          <div style="color: var(--text-dim); text-align: center; padding: 2rem;">
+            No active connections
+          </div>
+        `;
+        return;
+      }
+
+      connectionsList.innerHTML = Array.from(connections.entries()).map(([id, conn]) => `
+        <div class="connection-item">
+          <div class="connection-info">
+            <div class="connection-badge">
+              <span>#${id}</span>
+            </div>
+            <span>${conn.remoteAddress}:${conn.remotePort}</span>
+          </div>
+          <button class="outline" onclick="closeConnection(${id})">Close</button>
+        </div>
+      `).join('');
+    }
+
+    /**
+     * Start TCP server
+     */
+    async function startServer() {
+      if (typeof TCPServerSocket === 'undefined') {
+        log('TCPServerSocket not available. Ensure you are in an IWA with direct-sockets permission.', 'error');
+        return;
+      }
+
+      const address = bindAddress.value.trim();
+      const port = parseInt(bindPort.value, 10);
+      const mode = serverMode.value;
+
+      if (!address || isNaN(port) || port < 1 || port > 65535) {
+        log('Invalid address or port', 'error');
+        return;
+      }
+
+      try {
+        log(`Starting ${mode} server on ${address}:${port}...`);
+
+        serverSocket = new TCPServerSocket(address, { localPort: port });
+        const { readable: server, localAddress, localPort } = await serverSocket.opened;
+
+        updateServerStatus(true, localAddress, localPort);
+        log(`Server listening on ${localAddress}:${localPort}`, 'success');
+
+        // Handle incoming connections
+        server.pipeTo(new WritableStream({
+          async write(connection) {
+            const connId = ++connectionCounter;
+
+            try {
+              const { readable: client, writable, remoteAddress, remotePort } = await connection.opened;
+
+              connections.set(connId, {
+                remoteAddress,
+                remotePort,
+                readable: client,
+                writable,
+              });
+
+              log(`Connection #${connId} from ${remoteAddress}:${remotePort}`);
+              updateConnectionsList();
+
+              // Handle connection based on mode
+              await handleConnection(connId, client, writable, mode);
+            } catch (err) {
+              log(`Connection #${connId} error: ${err.message}`, 'error');
+            } finally {
+              connections.delete(connId);
+              updateConnectionsList();
+              log(`Connection #${connId} closed`);
+            }
+          }
+        })).catch(err => {
+          if (err.name !== 'AbortError') {
+            log(`Server error: ${err.message}`, 'error');
+          }
+        });
+
+      } catch (err) {
+        log(`Failed to start server: ${err.message}`, 'error');
+        updateServerStatus(false);
+      }
+    }
+
+    /**
+     * Handle a connection based on server mode
+     */
+    async function handleConnection(connId, readable, writable, mode) {
+      const reader = readable.getReader();
+      const writer = writable.getWriter();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const data = new TextDecoder().decode(value);
+          log(`#${connId} received: ${data.substring(0, 100)}${data.length > 100 ? '...' : ''}`);
+
+          if (mode === 'echo') {
+            // Echo mode: send data back
+            await writer.write(new TextEncoder().encode(`Echo: ${data}`));
+          } else if (mode === 'http') {
+            // HTTP mode: respond with simple HTTP response
+            const response = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nFreehold TCP Server - Hello from IWA!\n`;
+            await writer.write(new TextEncoder().encode(response));
+            break; // Close after response
+          } else {
+            // Custom mode: just acknowledge
+            await writer.write(new TextEncoder().encode('ACK\n'));
+          }
+        }
+      } finally {
+        reader.releaseLock();
+        writer.releaseLock();
+      }
+    }
+
+    /**
+     * Stop TCP server
+     */
+    async function stopServer() {
+      if (!serverSocket) return;
+
+      try {
+        log('Stopping server...');
+
+        // Close all connections
+        for (const [id, conn] of connections) {
+          try {
+            // Connections will be cleaned up when server closes
+          } catch (e) {}
+        }
+        connections.clear();
+        updateConnectionsList();
+
+        // Close server socket
+        await serverSocket.close();
+        serverSocket = null;
+
+        updateServerStatus(false);
+        log('Server stopped', 'success');
+      } catch (err) {
+        log(`Error stopping server: ${err.message}`, 'error');
+      }
+    }
+
+    /**
+     * Close a specific connection
+     */
+    window.closeConnection = function(connId) {
+      const conn = connections.get(connId);
+      if (conn) {
+        connections.delete(connId);
+        updateConnectionsList();
+        log(`Connection #${connId} closed by user`);
+      }
+    };
+
+    // Event listeners
+    btnStart.addEventListener('click', startServer);
+    btnStop.addEventListener('click', stopServer);
+    btnClear.addEventListener('click', () => {
+      logArea.innerHTML = '';
+      log('Log cleared');
+    });
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      log('TCP Server Socket interface ready');
+
+      if (typeof TCPServerSocket === 'undefined') {
+        log('TCPServerSocket API not detected. This requires an Isolated Web App environment.', 'error');
+      } else {
+        log('TCPServerSocket API available', 'success');
+      }
+    });
+  </script>
+</body>
+</html>

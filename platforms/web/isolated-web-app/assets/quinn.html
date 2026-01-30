@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freehold - QUIC Test Interface</title>
+  <link rel="manifest" href="/.well-known/manifest.webmanifest">
+  <style>
+    :root {
+      --bg-primary: #1a1a2e;
+      --bg-secondary: #16213e;
+      --accent: #0f3460;
+      --highlight: #e94560;
+      --text: #eaeaea;
+      --text-dim: #8b8b8b;
+      --success: #00d26a;
+      --error: #ff6b6b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+      background: var(--bg-primary);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--accent);
+    }
+
+    .logo {
+      font-size: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      margin-left: auto;
+    }
+
+    .panel {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--highlight);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: var(--bg-primary);
+    }
+
+    .status-badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .status-badge.connected .dot { background: var(--success); }
+    .status-badge.error .dot { background: var(--error); }
+    .status-badge.pending .dot {
+      background: #ffc107;
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .form-row {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .form-group {
+      flex: 1;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      background: var(--bg-primary);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--highlight);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      padding: 0.75rem 1.5rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--highlight);
+    }
+
+    button:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      background: var(--highlight);
+    }
+
+    button.outline {
+      background: transparent;
+      border: 1px solid var(--accent);
+    }
+
+    .log-area {
+      background: var(--bg-primary);
+      border-radius: 8px;
+      padding: 1rem;
+      height: 250px;
+      overflow-y: auto;
+      font-size: 0.8rem;
+      line-height: 1.8;
+    }
+
+    .log-line {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .log-time {
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .log-level {
+      flex-shrink: 0;
+      padding: 0 0.5rem;
+      border-radius: 3px;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+    }
+
+    .log-level.info { background: var(--accent); }
+    .log-level.success { background: var(--success); color: #000; }
+    .log-level.error { background: var(--error); }
+    .log-level.debug { background: #6c757d; }
+
+    .log-content {
+      word-break: break-all;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .stat-card {
+      background: var(--bg-primary);
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--highlight);
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin-top: 0.25rem;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--highlight);
+      text-decoration: none;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+
+    .back-link:hover {
+      text-decoration: underline;
+    }
+
+    .code-block {
+      background: var(--bg-primary);
+      border-radius: 6px;
+      padding: 1rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      margin-top: 1rem;
+    }
+
+    .info-text {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/" class="back-link">&larr; Back to main</a>
+
+    <header>
+      <div class="logo">⬡</div>
+      <h1>QUIC Test Interface</h1>
+      <span class="subtitle">quinn-wasm + Direct Sockets</span>
+    </header>
+
+    <div class="panel">
+      <div class="panel-title">
+        Connection Status
+        <span class="status-badge" id="connection-status">
+          <span class="dot"></span>
+          <span id="status-label">Disconnected</span>
+        </span>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Server Address</label>
+          <input type="text" id="server-addr" placeholder="127.0.0.1:4433" value="127.0.0.1:4433">
+        </div>
+        <div class="form-group">
+          <label>ALPN Protocol</label>
+          <select id="alpn-protocol">
+            <option value="h3">HTTP/3 (h3)</option>
+            <option value="hq">QUIC (hq)</option>
+            <option value="freehold">Freehold Protocol</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button id="btn-connect" class="primary">Connect</button>
+        <button id="btn-disconnect" class="outline" disabled>Disconnect</button>
+        <button id="btn-ping" class="outline" disabled>Send Ping</button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-rtt">--</div>
+          <div class="stat-label">RTT (ms)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-bytes-sent">0</div>
+          <div class="stat-label">Bytes Sent</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-bytes-recv">0</div>
+          <div class="stat-label">Bytes Received</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-streams">0</div>
+          <div class="stat-label">Active Streams</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Send Data</div>
+
+      <div class="form-group">
+        <label>Message (will be sent as QUIC stream)</label>
+        <textarea id="message-data" placeholder="Enter data to send over QUIC..."></textarea>
+      </div>
+
+      <div class="btn-row" style="margin-top: 1rem;">
+        <button id="btn-send" disabled>Send Message</button>
+        <button id="btn-send-datagram" class="outline" disabled>Send Datagram</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Activity Log</div>
+      <div class="log-area" id="log-area"></div>
+      <div class="btn-row" style="margin-top: 1rem;">
+        <button id="btn-clear-log" class="outline">Clear Log</button>
+        <button id="btn-export-log" class="outline">Export Log</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">About quinn-wasm</div>
+      <p class="info-text">
+        This interface uses <strong>quinn-wasm</strong> compiled to WebAssembly to provide
+        native QUIC protocol support in the browser. Combined with the Direct Sockets API
+        available in Isolated Web Apps, this enables true UDP-based QUIC connections without
+        WebSocket or WebTransport proxying.
+      </p>
+      <div class="code-block">
+// Connection example
+import init, { connect_quic_direct_sockets } from './quinn_wasm_direct_sockets.js';
+
+await init();
+const response = await connect_quic_direct_sockets('127.0.0.1:4433', 'Hello');
+console.log('Server response:', response);
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./quinn-client.js"></script>
+</body>
+</html>

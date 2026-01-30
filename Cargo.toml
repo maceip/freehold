@@ -15,6 +15,7 @@ exclude = [
     "platforms/macos",
     "platforms/windows",
     "platforms/linux",
+    "platforms/web",
 ]
 
 [workspace.package]

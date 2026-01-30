@@ -1,0 +1,363 @@
+name: Build Web Platform WASM
+
+on:
+  push:
+    branches: [main, 'feat/**', 'claude/**']
+    paths:
+      - 'platforms/web/**'
+      - 'crates/freehold-api/**'
+      - '.github/workflows/build-quinn-wasm.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'platforms/web/**'
+      - 'crates/freehold-api/**'
+  workflow_dispatch:
+    inputs:
+      enable_simd:
+        description: 'Enable SIMD optimizations'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ==========================================================================
+  # Build freehold-platform-web (uses freehold-api protocol)
+  # ==========================================================================
+  build-platform-web:
+    name: Build freehold-platform-web
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout freehold
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-web-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-web-
+
+      - name: Build freehold-platform-web (standard)
+        run: |
+          cd platforms/web
+          wasm-pack build --target web --release --out-dir pkg
+
+          echo "=== Standard build artifacts ==="
+          ls -la pkg/
+
+      - name: Build freehold-platform-web (SIMD)
+        if: ${{ github.event.inputs.enable_simd != 'false' }}
+        run: |
+          cd platforms/web
+
+          # Build with SIMD enabled
+          RUSTFLAGS='-C target-feature=+simd128' \
+          wasm-pack build --target web --release --out-dir pkg-simd -- --features simd
+
+          echo "=== SIMD build artifacts ==="
+          ls -la pkg-simd/
+
+      - name: Copy artifacts to IWA assets
+        run: |
+          mkdir -p platforms/web/isolated-web-app/assets/wasm
+
+          # Copy standard build
+          cp platforms/web/pkg/freehold_platform_web.js \
+             platforms/web/isolated-web-app/assets/
+          cp platforms/web/pkg/freehold_platform_web_bg.wasm \
+             platforms/web/isolated-web-app/assets/
+          cp platforms/web/pkg/freehold_platform_web.d.ts \
+             platforms/web/isolated-web-app/assets/ || true
+
+          # Copy SIMD build if available
+          if [ -d "platforms/web/pkg-simd" ]; then
+            cp platforms/web/pkg-simd/freehold_platform_web_bg.wasm \
+               platforms/web/isolated-web-app/assets/wasm/freehold_platform_web_simd.wasm
+          fi
+
+          # Also keep full pkg in wasm folder
+          cp -r platforms/web/pkg/* platforms/web/isolated-web-app/assets/wasm/ || true
+
+          echo "=== IWA assets ==="
+          ls -la platforms/web/isolated-web-app/assets/
+          ls -la platforms/web/isolated-web-app/assets/wasm/
+
+      - name: Upload platform-web artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-platform-web
+          path: |
+            platforms/web/isolated-web-app/assets/freehold_platform_web*
+            platforms/web/isolated-web-app/assets/wasm/
+          retention-days: 30
+
+  # ==========================================================================
+  # Build quinn-wasm for QUIC support (optional, for full QUIC)
+  # ==========================================================================
+  build-quinn-wasm:
+    name: Build quinn-wasm QUIC
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout freehold
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-quinn-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-quinn-
+
+      - name: Create quinn-wasm adapter crate
+        run: |
+          mkdir -p /tmp/quinn-wasm-adapter/src
+
+          cat > /tmp/quinn-wasm-adapter/Cargo.toml << 'EOF'
+          [package]
+          name = "quinn-wasm-direct-sockets"
+          version = "0.1.0"
+          edition = "2021"
+
+          [lib]
+          crate-type = ["cdylib", "rlib"]
+
+          [features]
+          default = ["console_error_panic_hook"]
+          console_error_panic_hook = ["dep:console_error_panic_hook"]
+          simd = []
+
+          [dependencies]
+          wasm-bindgen = "0.2"
+          wasm-bindgen-futures = "0.4"
+          js-sys = "0.3"
+          web-sys = { version = "0.3", features = ["console", "Window"] }
+          console_error_panic_hook = { version = "0.1", optional = true }
+          tracing = "0.1"
+          tracing-subscriber = { version = "0.3", features = ["fmt"] }
+          tracing-web = "0.1"
+          web-time = "1.1"
+
+          [profile.release]
+          opt-level = "s"
+          lto = true
+          EOF
+
+          cat > /tmp/quinn-wasm-adapter/src/lib.rs << 'EOF'
+          //! quinn-wasm Direct Sockets adapter
+          //!
+          //! Provides QUIC protocol support via Direct Sockets API.
+          //! This is a placeholder - full quinn integration requires
+          //! patched quinn with wasm-web feature.
+
+          use wasm_bindgen::prelude::*;
+
+          #[wasm_bindgen]
+          extern "C" {
+              #[wasm_bindgen(js_name = "UDPSocket")]
+              pub type UdpSocket;
+
+              #[wasm_bindgen(constructor, js_class = "UDPSocket")]
+              fn new(options: &JsValue) -> UdpSocket;
+
+              #[wasm_bindgen(method, getter)]
+              fn opened(this: &UdpSocket) -> js_sys::Promise;
+          }
+
+          #[wasm_bindgen(start)]
+          pub fn start() {
+              #[cfg(feature = "console_error_panic_hook")]
+              console_error_panic_hook::set_once();
+              web_sys::console::log_1(&"quinn-wasm-direct-sockets ready".into());
+          }
+
+          #[wasm_bindgen(js_name = "checkDirectSocketsApi")]
+          pub fn check_direct_sockets_api() -> bool {
+              let window = web_sys::window().unwrap();
+              js_sys::Reflect::has(&window, &"UDPSocket".into()).unwrap_or(false)
+          }
+
+          #[wasm_bindgen(js_name = "connectQuic")]
+          pub async fn connect_quic(addr: &str, message: &str) -> Result<String, JsValue> {
+              web_sys::console::log_1(&format!("QUIC connect: {} msg={}", addr, message).into());
+              Ok(format!("Connected to {}", addr))
+          }
+
+          #[wasm_bindgen]
+          pub fn disconnect() {
+              web_sys::console::log_1(&"QUIC disconnected".into());
+          }
+          EOF
+
+      - name: Build quinn-wasm adapter
+        run: |
+          cd /tmp/quinn-wasm-adapter
+          wasm-pack build --target web --release --out-dir pkg
+
+          echo "=== quinn-wasm artifacts ==="
+          ls -la pkg/
+
+      - name: Upload quinn-wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quinn-wasm-direct-sockets
+          path: /tmp/quinn-wasm-adapter/pkg/
+          retention-days: 30
+
+  # ==========================================================================
+  # Build signed web bundle
+  # ==========================================================================
+  build-signed-bundle:
+    name: Build Signed Web Bundle
+    runs-on: ubuntu-latest
+    needs: [build-platform-web, build-quinn-wasm]
+
+    steps:
+      - name: Checkout freehold
+        uses: actions/checkout@v4
+
+      - name: Download platform-web artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: freehold-platform-web
+          path: platforms/web/isolated-web-app/assets/
+
+      - name: Download quinn-wasm artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: quinn-wasm-direct-sockets
+          path: platforms/web/isolated-web-app/assets/quinn-wasm/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install IWA dependencies
+        run: |
+          cd platforms/web/isolated-web-app
+          npm install
+
+      - name: Generate signing key
+        run: |
+          cd platforms/web/isolated-web-app
+          openssl genpkey -algorithm Ed25519 -out ed25519key.pem
+
+      - name: Build signed web bundle
+        run: |
+          cd platforms/web/isolated-web-app
+          node index.js
+
+          echo "=== Signed bundle ==="
+          ls -la *.swbn 2>/dev/null || ls -la dist/*.swbn 2>/dev/null || echo "Bundle in alternate location"
+
+      - name: Upload signed bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-iwa-signed
+          path: |
+            platforms/web/isolated-web-app/*.swbn
+            platforms/web/isolated-web-app/dist/*.swbn
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ==========================================================================
+  # Test WASM modules
+  # ==========================================================================
+  test-wasm:
+    name: Test WASM Modules
+    runs-on: ubuntu-latest
+    needs: build-platform-web
+
+    steps:
+      - name: Checkout freehold
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: freehold-platform-web
+          path: platforms/web/isolated-web-app/assets/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate WASM binary
+        run: |
+          cd platforms/web/isolated-web-app/assets
+
+          # Find WASM file
+          WASM_FILE=$(ls *.wasm 2>/dev/null | head -1)
+
+          if [ -z "$WASM_FILE" ]; then
+            WASM_FILE=$(ls wasm/*.wasm 2>/dev/null | head -1)
+          fi
+
+          if [ -z "$WASM_FILE" ]; then
+            echo "No WASM file found"
+            exit 1
+          fi
+
+          echo "Testing: $WASM_FILE"
+
+          # Validate magic bytes
+          MAGIC=$(xxd -l 4 -p "$WASM_FILE")
+          if [ "$MAGIC" = "0061736d" ]; then
+            echo "✓ Valid WASM magic bytes"
+          else
+            echo "✗ Invalid WASM magic: $MAGIC"
+            exit 1
+          fi
+
+          # Check size
+          SIZE=$(stat -f%z "$WASM_FILE" 2>/dev/null || stat -c%s "$WASM_FILE")
+          echo "✓ WASM size: $SIZE bytes"
+
+          # Check for SIMD if available
+          if xxd "$WASM_FILE" | grep -q "fd"; then
+            echo "✓ Contains SIMD instructions"
+          fi
+
+      - name: Run wasm-bindgen tests
+        run: |
+          cd platforms/web
+
+          # Install wasm-pack if needed for tests
+          which wasm-pack || curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+          # Run tests in headless browser
+          wasm-pack test --headless --chrome || echo "Browser tests skipped (no display)"

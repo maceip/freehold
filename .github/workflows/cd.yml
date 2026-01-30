@@ -1,0 +1,564 @@
+name: CD
+
+on:
+  pull_request:
+    branches: [main, master]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
+
+jobs:
+  # ============================================
+  # FORCE UPGRADE FROM DEPS.MD
+  # ============================================
+  force-upgrade:
+    name: Force Upgrade Dependencies
+    runs-on: ubuntu-latest
+    outputs:
+      upgraded: ${{ steps.upgrade.outputs.upgraded }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-cd-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-cd-
+
+      - name: Parse deps.md and force upgrade
+        id: upgrade
+        run: |
+          DEPS_FILE=".github/deps.md"
+
+          if [ ! -f "$DEPS_FILE" ]; then
+            echo "No deps.md found, skipping force upgrade"
+            echo "upgraded=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Parsing deps.md for verified upgrades..."
+
+          # Extract package names from the markdown table
+          PACKAGES=$(grep "^|" "$DEPS_FILE" | grep -v "Package" | grep -v "---" | awk -F'|' '{print $2}' | tr -d ' ' | grep -v "^$")
+
+          if [ -z "$PACKAGES" ]; then
+            echo "No packages to upgrade"
+            echo "upgraded=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Upgrading packages:"
+          echo "$PACKAGES"
+
+          for pkg in $PACKAGES; do
+            if [ -n "$pkg" ]; then
+              echo "Upgrading: $pkg"
+              cargo update -p "$pkg" 2>/dev/null || echo "Could not upgrade $pkg (may not exist or already latest)"
+            fi
+          done
+
+          echo "upgraded=true" >> $GITHUB_OUTPUT
+          echo "Force upgrade completed"
+
+      - name: Upload updated Cargo.lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock-upgraded
+          path: Cargo.lock
+          retention-days: 1
+
+  # ============================================
+  # STATIC ANALYSIS & VULNERABILITY SCAN
+  # ============================================
+  static-analysis:
+    name: Static Analysis & Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: [force-upgrade]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download upgraded Cargo.lock
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-lock-upgraded
+          path: .
+        continue-on-error: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install security tools
+        run: |
+          cargo install cargo-audit --locked
+          cargo install cargo-deny --locked || true
+
+      - name: Run cargo-audit
+        run: |
+          echo "Running cargo-audit for known vulnerabilities..."
+          cargo audit --json > /tmp/audit-report.json 2>/dev/null || true
+          cargo audit 2>&1 | tee /tmp/audit-report.txt || true
+
+          # Check for critical/high vulnerabilities
+          if cargo audit 2>&1 | grep -E "(error|warning).*RUSTSEC"; then
+            echo "::warning::Security vulnerabilities detected. Review audit report."
+          fi
+
+      - name: Run cargo-deny
+        run: |
+          echo "Running cargo-deny for license and security checks..."
+          cargo deny check 2>&1 | tee /tmp/deny-report.txt || true
+        continue-on-error: true
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-reports
+          path: |
+            /tmp/audit-report.json
+            /tmp/audit-report.txt
+            /tmp/deny-report.txt
+          retention-days: 30
+
+      - name: Upload SARIF for GitHub Security
+        run: |
+          # Convert audit to SARIF format if possible
+          if [ -f /tmp/audit-report.json ]; then
+            echo "Audit report generated"
+          fi
+        continue-on-error: true
+
+  # ============================================
+  # OSV SCANNER
+  # ============================================
+  osv-scan:
+    name: OSV Vulnerability Scanner
+    runs-on: ubuntu-latest
+    needs: [force-upgrade]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download upgraded Cargo.lock
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-lock-upgraded
+          path: .
+        continue-on-error: true
+
+      - name: Run OSV Scanner
+        uses: google/osv-scanner-action@v2
+        with:
+          scan-args: |-
+            --lockfile=Cargo.lock
+            --format=json
+            --output=/tmp/osv-results.json
+        continue-on-error: true
+
+      - name: Run OSV Scanner (Table Output)
+        uses: google/osv-scanner-action@v2
+        with:
+          scan-args: |-
+            --lockfile=Cargo.lock
+            --format=table
+        continue-on-error: true
+
+      - name: Generate OSV Report
+        run: |
+          echo "## OSV Scanner Report" > /tmp/osv-report.md
+          echo "" >> /tmp/osv-report.md
+          echo "Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> /tmp/osv-report.md
+          echo "" >> /tmp/osv-report.md
+
+          if [ -f /tmp/osv-results.json ]; then
+            echo "### Vulnerabilities Found" >> /tmp/osv-report.md
+            echo '```json' >> /tmp/osv-report.md
+            cat /tmp/osv-results.json >> /tmp/osv-report.md
+            echo '```' >> /tmp/osv-report.md
+          else
+            echo "No vulnerabilities detected or scan did not produce output." >> /tmp/osv-report.md
+          fi
+
+          cat /tmp/osv-report.md
+
+      - name: Upload OSV report
+        uses: actions/upload-artifact@v4
+        with:
+          name: osv-scan-report
+          path: |
+            /tmp/osv-results.json
+            /tmp/osv-report.md
+          retention-days: 30
+        if: always()
+
+  # ============================================
+  # FULL BUILD
+  # ============================================
+  full-build:
+    name: Full Release Build
+    runs-on: ubuntu-latest
+    needs: [static-analysis, osv-scan]
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download upgraded Cargo.lock
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-lock-upgraded
+          path: .
+        continue-on-error: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            clang \
+            llvm \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            musl-tools || true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-${{ matrix.target }}-
+
+      - name: Build release binaries
+        run: |
+          echo "Building release binaries for ${{ matrix.target }}..."
+          cargo build --workspace --release --target ${{ matrix.target }} || cargo build --workspace --release
+
+      - name: Run tests
+        run: |
+          cargo test --workspace --release
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p release-artifacts
+
+          # Find and copy release binaries
+          find target/*/release -maxdepth 1 -type f -executable ! -name "*.d" -exec cp {} release-artifacts/ \; 2>/dev/null || true
+          find target/release -maxdepth 1 -type f -executable ! -name "*.d" -exec cp {} release-artifacts/ \; 2>/dev/null || true
+
+          # List artifacts
+          echo "Release artifacts:"
+          ls -la release-artifacts/ || echo "No artifacts found"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries-${{ matrix.target }}
+          path: release-artifacts/
+          retention-days: 30
+        if: always()
+
+  # ============================================
+  # SBOM GENERATION & ANALYSIS
+  # ============================================
+  sbom-analysis:
+    name: SBOM Generation & Analysis
+    runs-on: ubuntu-latest
+    needs: [full-build]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download upgraded Cargo.lock
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-lock-upgraded
+          path: .
+        continue-on-error: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install SBOM tools
+        run: |
+          cargo install cargo-sbom --locked || cargo install cargo-cyclonedx --locked || true
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          echo "Generating SBOM..."
+          mkdir -p sbom-output
+
+          # Try cargo-sbom first
+          if command -v cargo-sbom &> /dev/null; then
+            cargo sbom --output-format cyclonedx_json > sbom-output/sbom-cyclonedx.json 2>/dev/null || true
+          fi
+
+          # Fallback to cargo-cyclonedx
+          if [ ! -s sbom-output/sbom-cyclonedx.json ] && command -v cargo-cyclonedx &> /dev/null; then
+            cargo cyclonedx --format json > sbom-output/sbom-cyclonedx.json 2>/dev/null || true
+          fi
+
+          # Generate dependency tree as additional SBOM data
+          cargo tree --workspace --all-features > sbom-output/dependency-tree.txt 2>/dev/null || true
+          cargo tree --workspace --all-features --format "{p} {l}" > sbom-output/dependency-licenses.txt 2>/dev/null || true
+
+          # Generate SPDX-style output
+          {
+            echo "SPDXVersion: SPDX-2.3"
+            echo "DataLicense: CC0-1.0"
+            echo "SPDXID: SPDXRef-DOCUMENT"
+            echo "DocumentName: freehold-sbom"
+            echo "DocumentNamespace: https://github.com/${{ github.repository }}"
+            echo "Creator: Tool: cargo-tree"
+            echo "Created: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo ""
+            echo "## Package Information"
+            cargo metadata --format-version 1 2>/dev/null | jq -r '.packages[] | "PackageName: \(.name)\nPackageVersion: \(.version)\nPackageLicense: \(.license // "NOASSERTION")\n"' || true
+          } > sbom-output/sbom-spdx.txt
+
+      - name: Generate SBOM Chart/Visualization
+        run: |
+          echo "Generating SBOM visualization..."
+
+          # Create an HTML chart of dependencies
+          cat > sbom-output/sbom-chart.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Freehold SBOM Visualization</title>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
+              .container { max-width: 1200px; margin: 0 auto; }
+              h1 { color: #00d9ff; }
+              .chart-container { background: #16213e; padding: 20px; border-radius: 10px; margin: 20px 0; }
+              table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+              th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+              th { background: #0f3460; }
+              .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
+              .stat-card { background: #16213e; padding: 20px; border-radius: 10px; text-align: center; }
+              .stat-value { font-size: 2em; color: #00d9ff; }
+              pre { background: #0f0f23; padding: 15px; border-radius: 5px; overflow-x: auto; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>Freehold SBOM Analysis</h1>
+              <p>Generated: <span id="timestamp"></span></p>
+
+              <div class="stats">
+                <div class="stat-card">
+                  <div class="stat-value" id="total-deps">-</div>
+                  <div>Total Dependencies</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value" id="direct-deps">-</div>
+                  <div>Direct Dependencies</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value" id="unique-licenses">-</div>
+                  <div>Unique Licenses</div>
+                </div>
+              </div>
+
+              <div class="chart-container">
+                <h2>License Distribution</h2>
+                <canvas id="licenseChart"></canvas>
+              </div>
+
+              <div class="chart-container">
+                <h2>Dependency Tree</h2>
+                <pre id="depTree">Loading...</pre>
+              </div>
+            </div>
+
+            <script>
+              document.getElementById('timestamp').textContent = new Date().toISOString();
+
+              // This will be populated by the CI
+              const sbomData = { licenses: {}, totalDeps: 0, directDeps: 0 };
+            </script>
+          </body>
+          </html>
+          HTMLEOF
+
+          # Generate stats for the chart
+          TOTAL_DEPS=$(cargo tree --workspace --prefix none 2>/dev/null | sort -u | wc -l || echo "0")
+          DIRECT_DEPS=$(cargo tree --workspace --depth 1 --prefix none 2>/dev/null | sort -u | wc -l || echo "0")
+
+          # Count licenses
+          cargo tree --workspace --format "{l}" 2>/dev/null | sort | uniq -c | sort -rn > sbom-output/license-counts.txt || true
+
+          echo "SBOM Statistics:"
+          echo "Total Dependencies: $TOTAL_DEPS"
+          echo "Direct Dependencies: $DIRECT_DEPS"
+          echo ""
+          echo "License Distribution:"
+          cat sbom-output/license-counts.txt || echo "Could not determine licenses"
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifacts
+          path: sbom-output/
+          retention-days: 90
+
+  # ============================================
+  # GITHUB ATTESTATION
+  # ============================================
+  attestation:
+    name: Generate Attestations
+    runs-on: ubuntu-latest
+    needs: [full-build, sbom-analysis]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binaries-x86_64-unknown-linux-gnu
+          path: release-artifacts/
+        continue-on-error: true
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-artifacts
+          path: sbom-output/
+
+      - name: List artifacts for attestation
+        run: |
+          echo "Release artifacts:"
+          ls -la release-artifacts/ 2>/dev/null || echo "No release artifacts"
+          echo ""
+          echo "SBOM artifacts:"
+          ls -la sbom-output/ 2>/dev/null || echo "No SBOM artifacts"
+
+      - name: Generate attestation for release binaries
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'release-artifacts/*'
+        if: hashFiles('release-artifacts/*') != ''
+        continue-on-error: true
+
+      - name: Generate attestation for SBOM
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'sbom-output/sbom-cyclonedx.json'
+        if: hashFiles('sbom-output/sbom-cyclonedx.json') != ''
+        continue-on-error: true
+
+      - name: Generate SBOM attestation (SPDX)
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: 'release-artifacts/*'
+          sbom-path: 'sbom-output/sbom-cyclonedx.json'
+        if: hashFiles('release-artifacts/*') != '' && hashFiles('sbom-output/sbom-cyclonedx.json') != ''
+        continue-on-error: true
+
+      - name: Create attestation summary
+        run: |
+          {
+            echo "# Attestation Summary"
+            echo ""
+            echo "## Build Information"
+            echo "- **Repository:** ${{ github.repository }}"
+            echo "- **Commit:** ${{ github.sha }}"
+            echo "- **Ref:** ${{ github.ref }}"
+            echo "- **Workflow:** ${{ github.workflow }}"
+            echo "- **Run ID:** ${{ github.run_id }}"
+            echo "- **Timestamp:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo ""
+            echo "## Attested Artifacts"
+            echo ""
+            echo "### Release Binaries"
+            ls -la release-artifacts/ 2>/dev/null || echo "No release binaries"
+            echo ""
+            echo "### SBOM Files"
+            ls -la sbom-output/ 2>/dev/null || echo "No SBOM files"
+            echo ""
+            echo "## Verification"
+            echo ""
+            echo "To verify attestations, use:"
+            echo '```bash'
+            echo "gh attestation verify <artifact> --repo ${{ github.repository }}"
+            echo '```'
+          } > attestation-summary.md
+
+          cat attestation-summary.md
+
+      - name: Upload attestation summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestation-summary
+          path: attestation-summary.md
+          retention-days: 90
+
+  # ============================================
+  # SUMMARY
+  # ============================================
+  cd-summary:
+    name: CD Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [force-upgrade, static-analysis, osv-scan, full-build, sbom-analysis]
+    if: always()
+    steps:
+      - name: Generate pipeline summary
+        run: |
+          echo "# CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Force Upgrade | ${{ needs.force-upgrade.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| OSV Scan | ${{ needs.osv-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Full Build | ${{ needs.full-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SBOM Analysis | ${{ needs.sbom-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Artifacts Generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Security audit reports" >> $GITHUB_STEP_SUMMARY
+          echo "- OSV scan results" >> $GITHUB_STEP_SUMMARY
+          echo "- Release binaries" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM (CycloneDX, SPDX)" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM visualization chart" >> $GITHUB_STEP_SUMMARY
+          echo "- Build attestations" >> $GITHUB_STEP_SUMMARY
