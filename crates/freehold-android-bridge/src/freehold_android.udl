@@ -1,0 +1,99 @@
+// Freehold Android Bridge - UniFFI Interface Definition
+// This defines the Kotlin-accessible API for the Freehold client
+
+namespace freehold_android {
+    // Initialize the Rust runtime (call once at app start)
+    void init_runtime();
+
+    // Cleanup the Rust runtime
+    void shutdown_runtime();
+};
+
+// Connection state enum
+enum ConnectionState {
+    "Disconnected",
+    "Connecting",
+    "Connected",
+    "Error",
+};
+
+// Status update callback interface
+callback interface StatusCallback {
+    void on_state_changed(ConnectionState state, string message);
+    void on_port_assigned(u16 port);
+    void on_neighbor_discovered(string ip);
+    void on_error(string error);
+    void on_bytes_transferred(u64 rx, u64 tx);
+};
+
+// Tunnel configuration
+dictionary TunnelConfig {
+    string relay_address;
+    u16 relay_port;
+    u16 local_port;
+    string backend_address;
+    boolean auto_discover;
+};
+
+// The main Freehold tunnel interface
+interface FreeholdTunnel {
+    // Create a new tunnel instance
+    constructor(TunnelConfig config, StatusCallback callback);
+
+    // Start the tunnel (call after VPN is established)
+    // fd is the TUN file descriptor from VpnService
+    [Throws=TunnelError]
+    void start(i32 vpn_fd);
+
+    // Stop the tunnel
+    void stop();
+
+    // Check if tunnel is running
+    boolean is_running();
+
+    // Get current connection state
+    ConnectionState get_state();
+
+    // Get assigned relay port
+    u16 get_port();
+
+    // Process a packet from the VPN interface
+    // Returns the response packet, or empty if none
+    [Throws=TunnelError]
+    bytes process_outbound(bytes packet);
+
+    // Feed an inbound packet from the QUIC tunnel
+    [Throws=TunnelError]
+    bytes process_inbound(bytes packet);
+
+    // Get statistics
+    sequence<u64> get_stats();
+};
+
+// H3 Proxy for HTTP/3 to HTTP/1.1 conversion
+interface H3ProxyBridge {
+    // Create proxy with self-signed certificate
+    [Throws=TunnelError]
+    constructor(string bind_address, string backend_address, string domain);
+
+    // Start the proxy
+    [Throws=TunnelError]
+    void start();
+
+    // Stop the proxy
+    void stop();
+
+    // Check if running
+    boolean is_running();
+};
+
+// Error types
+[Error]
+enum TunnelError {
+    "NetworkError",
+    "ConfigError",
+    "RuntimeError",
+    "ProxyError",
+    "AlreadyRunning",
+    "NotRunning",
+};
