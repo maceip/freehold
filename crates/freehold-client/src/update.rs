@@ -117,14 +117,12 @@ pub async fn self_update() -> Result<()> {
         .context("Failed to read update data")?;
 
     // Get paths
-    let current_exe = std::env::current_exe()
-        .context("Failed to get current executable path")?;
+    let current_exe = std::env::current_exe().context("Failed to get current executable path")?;
     let backup_exe = current_exe.with_extension("old");
     let new_exe = current_exe.with_extension("new");
 
     // Write new binary
-    std::fs::write(&new_exe, &binary_data)
-        .context("Failed to write new binary")?;
+    std::fs::write(&new_exe, &binary_data).context("Failed to write new binary")?;
 
     // Make executable on Unix
     #[cfg(unix)]
@@ -138,14 +136,15 @@ pub async fn self_update() -> Result<()> {
     if backup_exe.exists() {
         std::fs::remove_file(&backup_exe).ok();
     }
-    std::fs::rename(&current_exe, &backup_exe)
-        .context("Failed to backup current executable")?;
+    std::fs::rename(&current_exe, &backup_exe).context("Failed to backup current executable")?;
 
     // Rename new -> current
-    std::fs::rename(&new_exe, &current_exe)
-        .context("Failed to install new executable")?;
+    std::fs::rename(&new_exe, &current_exe).context("Failed to install new executable")?;
 
-    info!("Updated to version {}. Please restart Freehold.", latest_version);
+    info!(
+        "Updated to version {}. Please restart Freehold.",
+        latest_version
+    );
 
     // Clean up backup
     std::fs::remove_file(&backup_exe).ok();
@@ -198,10 +197,7 @@ fn get_asset_name() -> String {
 /// Compare two semver versions, return true if `new` is newer than `current`
 fn is_newer_version(new: &str, current: &str) -> bool {
     let parse_version = |v: &str| -> (u32, u32, u32) {
-        let parts: Vec<u32> = v
-            .split('.')
-            .filter_map(|p| p.parse().ok())
-            .collect();
+        let parts: Vec<u32> = v.split('.').filter_map(|p| p.parse().ok()).collect();
         (
             parts.first().copied().unwrap_or(0),
             parts.get(1).copied().unwrap_or(0),

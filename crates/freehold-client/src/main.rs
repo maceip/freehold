@@ -14,7 +14,11 @@ mod service;
 mod update;
 
 #[derive(Parser)]
-#[command(name = "freehold", version, about = "Expose your service through Freehold")]
+#[command(
+    name = "freehold",
+    version,
+    about = "Expose your service through Freehold"
+)]
 struct Args {
     /// Relay server address (hostname:port or ip:port)
     #[clap(short, long, default_value = "freehold.lit.app:9999")]
@@ -124,12 +128,12 @@ async fn main() -> Result<()> {
 
     // Local mode: H3 proxy only, no relay registration
     if args.local {
-        let backend = args.backend.ok_or_else(|| {
-            anyhow::anyhow!("--backend is required in --local mode")
-        })?;
-        let port = args.port.ok_or_else(|| {
-            anyhow::anyhow!("--port is required in --local mode")
-        })?;
+        let backend = args
+            .backend
+            .ok_or_else(|| anyhow::anyhow!("--backend is required in --local mode"))?;
+        let port = args
+            .port
+            .ok_or_else(|| anyhow::anyhow!("--port is required in --local mode"))?;
         info!("Starting Freehold in local mode (H3 proxy only)");
         return run_local_h3_proxy(args, port, backend).await;
     }
@@ -151,7 +155,10 @@ async fn main() -> Result<()> {
         (port, Some(server))
     };
 
-    info!("Starting Freehold - claiming port {} via {} ({})", port, args.relay, relay_addr);
+    info!(
+        "Starting Freehold - claiming port {} via {} ({})",
+        port, args.relay, relay_addr
+    );
 
     // Determine if we're in H3 proxy mode
     if let Some(backend) = args.backend {
@@ -170,8 +177,8 @@ async fn main() -> Result<()> {
 
 /// Start a simple demo HTTP server on a random port
 async fn start_demo_http_server() -> Result<(tokio::task::JoinHandle<()>, u16)> {
-    use tokio::net::TcpListener;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     let listener = TcpListener::bind("0.0.0.0:0").await?;
     let port = listener.local_addr()?.port();
@@ -204,13 +211,11 @@ async fn start_demo_http_server() -> Result<(tokio::task::JoinHandle<()>, u16)> 
 
 /// Run in local mode (H3 proxy only, no relay registration)
 async fn run_local_h3_proxy(args: Args, port: u16, backend: SocketAddr) -> Result<()> {
-    use freehold_client_core::{
-        generate_self_signed_cert, H3Proxy, H3ProxyConfig, CertificateDer,
-    };
+    use freehold_client_core::{generate_self_signed_cert, CertificateDer, H3Proxy, H3ProxyConfig};
 
-    let h3_bind = args.h3_bind.unwrap_or_else(|| {
-        format!("0.0.0.0:{}", port).parse().unwrap()
-    });
+    let h3_bind = args
+        .h3_bind
+        .unwrap_or_else(|| format!("0.0.0.0:{}", port).parse().unwrap());
 
     info!("H3 proxy (local): {} -> backend {}", h3_bind, backend);
 
@@ -251,7 +256,8 @@ async fn run_local_h3_proxy(args: Args, port: u16, backend: SocketAddr) -> Resul
     // Spawn TCP Alt-Svc announcer
     let tcp_shutdown = shutdown_rx.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_tcp_alt_svc_announcer(tcp_certs, tcp_key, tcp_port, tcp_shutdown).await {
+        if let Err(e) = run_tcp_alt_svc_announcer(tcp_certs, tcp_key, tcp_port, tcp_shutdown).await
+        {
             tracing::error!("TCP Alt-Svc announcer error: {}", e);
         }
     });
@@ -272,11 +278,11 @@ async fn run_tcp_alt_svc_announcer(
     port: u16,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    use tokio::net::TcpListener;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use rustls::ServerConfig;
-    use tokio_rustls::TlsAcceptor;
     use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
 
     let tls_config = ServerConfig::builder()
         .with_no_client_auth()
@@ -284,7 +290,8 @@ async fn run_tcp_alt_svc_announcer(
         .context("build TLS config")?;
 
     let acceptor = TlsAcceptor::from(Arc::new(tls_config));
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
+        .await
         .context("bind TCP listener")?;
 
     info!("TCP Alt-Svc announcer listening on 0.0.0.0:{}", port);
@@ -345,34 +352,28 @@ async fn run_with_h3_proxy(
     mut status_rx: mpsc::Receiver<StatusUpdate>,
 ) -> Result<()> {
     use freehold_client_core::{
-        create_service_with_self_signed_cert, Service, ServiceConfig,
-        CertificateDer,
+        create_service_with_self_signed_cert, CertificateDer, Service, ServiceConfig,
     };
 
     // Determine H3 bind address
-    let h3_bind = args.h3_bind.unwrap_or_else(|| {
-        format!("0.0.0.0:{}", port).parse().unwrap()
-    });
+    let h3_bind = args
+        .h3_bind
+        .unwrap_or_else(|| format!("0.0.0.0:{}", port).parse().unwrap());
 
-    info!(
-        "H3 proxy mode: {} -> backend {}",
-        h3_bind, backend
-    );
+    info!("H3 proxy mode: {} -> backend {}", h3_bind, backend);
 
     // Create service - use provided certs or generate self-signed
     let service = if let (Some(cert_path), Some(key_path)) = (&args.cert, &args.key) {
         info!("Loading TLS cert from {:?}", cert_path);
 
         // Load certificate chain
-        let cert_pem = std::fs::read(cert_path)
-            .context("read certificate file")?;
+        let cert_pem = std::fs::read(cert_path).context("read certificate file")?;
         let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_slice())
             .collect::<Result<Vec<_>, _>>()
             .context("parse certificates")?;
 
         // Load private key
-        let key_pem = std::fs::read(key_path)
-            .context("read key file")?;
+        let key_pem = std::fs::read(key_path).context("read key file")?;
         let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
             .context("parse private key")?
             .context("no private key found")?;
@@ -388,7 +389,8 @@ async fn run_with_h3_proxy(
                 auto_discover: args.discover,
             },
             status_tx,
-        ).context("create service with provided certs")?
+        )
+        .context("create service with provided certs")?
     } else {
         create_service_with_self_signed_cert(
             relay_addr,
@@ -398,7 +400,8 @@ async fn run_with_h3_proxy(
             &args.domain,
             args.discover,
             status_tx,
-        ).context("create service with self-signed cert")?
+        )
+        .context("create service with self-signed cert")?
     };
 
     // Spawn status printer
@@ -453,34 +456,22 @@ async fn run_headless(
 }
 
 #[cfg(target_os = "macos")]
-async fn run_with_tray(
-    engine: Engine,
-    status_rx: mpsc::Receiver<StatusUpdate>,
-) -> Result<()> {
+async fn run_with_tray(engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) -> Result<()> {
     freehold_platform_macos::run(engine, status_rx).await
 }
 
 #[cfg(target_os = "windows")]
-async fn run_with_tray(
-    engine: Engine,
-    status_rx: mpsc::Receiver<StatusUpdate>,
-) -> Result<()> {
+async fn run_with_tray(engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) -> Result<()> {
     freehold_platform_windows::run(engine, status_rx).await
 }
 
 #[cfg(target_os = "linux")]
-async fn run_with_tray(
-    engine: Engine,
-    status_rx: mpsc::Receiver<StatusUpdate>,
-) -> Result<()> {
+async fn run_with_tray(engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) -> Result<()> {
     freehold_platform_linux::run(engine, status_rx).await
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-async fn run_with_tray(
-    engine: Engine,
-    status_rx: mpsc::Receiver<StatusUpdate>,
-) -> Result<()> {
+async fn run_with_tray(engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) -> Result<()> {
     tracing::warn!("No tray support for this platform, running headless");
     run_headless(engine, status_rx).await
 }

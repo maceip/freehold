@@ -268,7 +268,10 @@ impl Server {
 }
 
 /// Process XDP events from perf buffer
-async fn process_xdp_events(mut perf_array: AsyncPerfEventArray<aya::maps::MapData>, verbose: bool) {
+async fn process_xdp_events(
+    mut perf_array: AsyncPerfEventArray<aya::maps::MapData>,
+    verbose: bool,
+) {
     let cpus = online_cpus().expect("get online CPUs");
 
     for cpu_id in cpus {
@@ -403,9 +406,7 @@ async fn main() -> Result<()> {
     // Apply CLI overrides
     let interface = cli.interface.unwrap_or(config.interface.clone());
     let port = cli.port.unwrap_or(config.port);
-    let ebpf_path = cli
-        .ebpf
-        .unwrap_or_else(|| PathBuf::from(&config.ebpf_path));
+    let ebpf_path = cli.ebpf.unwrap_or_else(|| PathBuf::from(&config.ebpf_path));
     let verbose_events = cli.verbose_events || config.limits.verbose_events;
 
     let secret = config.get_secret()?;
@@ -435,10 +436,9 @@ async fn main() -> Result<()> {
     )
     .context("create registrations hashmap")?;
 
-    let perf_array: AsyncPerfEventArray<_> = AsyncPerfEventArray::try_from(
-        bpf.take_map(maps::EVENTS).context("get events map")?,
-    )
-    .context("create perf event array")?;
+    let perf_array: AsyncPerfEventArray<_> =
+        AsyncPerfEventArray::try_from(bpf.take_map(maps::EVENTS).context("get events map")?)
+            .context("create perf event array")?;
 
     process_xdp_events(perf_array, verbose_events).await;
 

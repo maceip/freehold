@@ -36,13 +36,21 @@ pub enum RelayState {
 /// Status update sent to UI
 #[derive(Debug, Clone)]
 pub enum StatusUpdate {
-    RelayState { addr: SocketAddr, state: RelayState },
+    RelayState {
+        addr: SocketAddr,
+        state: RelayState,
+    },
     NeighborDiscovered(Ipv4Addr),
     Error(String),
     /// Traffic stats update (bytes sent, bytes received)
-    Traffic { sent: u64, received: u64 },
+    Traffic {
+        sent: u64,
+        received: u64,
+    },
     /// Port changed (new endpoint requested)
-    PortChanged { port: u16 },
+    PortChanged {
+        port: u16,
+    },
 }
 
 /// Command sent from UI to engine
@@ -159,7 +167,11 @@ impl Engine {
             for i in 0..self.relays.len() {
                 let (state, elapsed, addr) = {
                     let relay = &self.relays[i];
-                    (relay.state, now.duration_since(relay.last_activity), relay.addr)
+                    (
+                        relay.state,
+                        now.duration_since(relay.last_activity),
+                        relay.addr,
+                    )
                 };
 
                 match state {
@@ -205,7 +217,9 @@ impl Engine {
         self.port = new_port;
 
         // Notify UI of port change
-        let _ = self.status_tx.try_send(StatusUpdate::PortChanged { port: new_port });
+        let _ = self
+            .status_tx
+            .try_send(StatusUpdate::PortChanged { port: new_port });
 
         // Reset all relays to disconnected
         for relay in &mut self.relays {
@@ -236,7 +250,10 @@ impl Engine {
 
     fn send_confirm(&mut self, idx: usize) {
         if let Some(cookie) = self.relays[idx].cookie {
-            let msg = Message::Confirm { port: self.port, cookie };
+            let msg = Message::Confirm {
+                port: self.port,
+                cookie,
+            };
             let data = msg.to_bytes();
             let addr = self.relays[idx].addr;
             if self.socket.send_to(&data, addr).is_ok() {
@@ -264,7 +281,11 @@ impl Engine {
         };
 
         // Match by port (server may respond from different IP due to anycast)
-        let idx = match self.relays.iter().position(|r| r.addr.port() == from.port()) {
+        let idx = match self
+            .relays
+            .iter()
+            .position(|r| r.addr.port() == from.port())
+        {
             Some(i) => i,
             None => return,
         };
@@ -300,7 +321,9 @@ impl Engine {
                                     cookie: None,
                                     last_activity: Instant::now() - timing::HEARTBEAT_INTERVAL,
                                 });
-                                let _ = self.status_tx.try_send(StatusUpdate::NeighborDiscovered(ip));
+                                let _ = self
+                                    .status_tx
+                                    .try_send(StatusUpdate::NeighborDiscovered(ip));
                             }
                         }
                     }
@@ -311,7 +334,9 @@ impl Engine {
                 warn!("ERROR from {}", from);
                 self.relays[idx].state = RelayState::Disconnected;
                 self.relays[idx].cookie = None;
-                let _ = self.status_tx.try_send(StatusUpdate::Error(format!("Relay {} rejected", from)));
+                let _ = self
+                    .status_tx
+                    .try_send(StatusUpdate::Error(format!("Relay {} rejected", from)));
             }
 
             _ => {}

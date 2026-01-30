@@ -71,10 +71,7 @@ fn install_windows() -> Result<()> {
     // Open HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let run_key = hkcu
-        .open_subkey_with_flags(
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            KEY_WRITE,
-        )
+        .open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", KEY_WRITE)
         .context("Failed to open Run registry key")?;
 
     // Add Freehold entry
@@ -93,10 +90,7 @@ fn uninstall_windows() -> Result<()> {
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let run_key = hkcu
-        .open_subkey_with_flags(
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            KEY_WRITE,
-        )
+        .open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", KEY_WRITE)
         .context("Failed to open Run registry key")?;
 
     run_key
@@ -158,12 +152,10 @@ fn install_macos() -> Result<()> {
         .context("Failed to get home directory")?
         .join("Library/LaunchAgents");
 
-    std::fs::create_dir_all(&launch_agents)
-        .context("Failed to create LaunchAgents directory")?;
+    std::fs::create_dir_all(&launch_agents).context("Failed to create LaunchAgents directory")?;
 
     let plist_path = launch_agents.join("com.freehold.client.plist");
-    std::fs::write(&plist_path, plist_content)
-        .context("Failed to write plist file")?;
+    std::fs::write(&plist_path, plist_content).context("Failed to write plist file")?;
 
     // Load the service
     std::process::Command::new("launchctl")
@@ -189,8 +181,7 @@ fn uninstall_macos() -> Result<()> {
             .arg(&plist_path)
             .status();
 
-        std::fs::remove_file(&plist_path)
-            .context("Failed to remove plist file")?;
+        std::fs::remove_file(&plist_path).context("Failed to remove plist file")?;
     }
 
     info!("Uninstalled Freehold from macOS startup");
@@ -236,12 +227,10 @@ WantedBy=default.target
         .context("Failed to get config directory")?
         .join("systemd/user");
 
-    std::fs::create_dir_all(&systemd_user)
-        .context("Failed to create systemd user directory")?;
+    std::fs::create_dir_all(&systemd_user).context("Failed to create systemd user directory")?;
 
     let service_path = systemd_user.join("freehold.service");
-    std::fs::write(&service_path, service_content)
-        .context("Failed to write service file")?;
+    std::fs::write(&service_path, service_content).context("Failed to write service file")?;
 
     // Reload systemd and enable service
     std::process::Command::new("systemctl")
@@ -270,8 +259,7 @@ fn uninstall_linux() -> Result<()> {
         .join("systemd/user/freehold.service");
 
     if service_path.exists() {
-        std::fs::remove_file(&service_path)
-            .context("Failed to remove service file")?;
+        std::fs::remove_file(&service_path).context("Failed to remove service file")?;
     }
 
     // Reload systemd

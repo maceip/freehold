@@ -257,7 +257,13 @@ where
         debug!("Stream finish: {} (client may have closed)", e);
     }
 
-    debug!("{} {} -> {} ({} bytes)", method, uri, status.as_u16(), resp_body.len());
+    debug!(
+        "{} {} -> {} ({} bytes)",
+        method,
+        uri,
+        status.as_u16(),
+        resp_body.len()
+    );
 
     Ok(())
 }

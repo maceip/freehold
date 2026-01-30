@@ -98,22 +98,13 @@ pub enum RelayState {
 #[serde(tag = "type")]
 pub enum StatusUpdate {
     #[serde(rename = "relay_state")]
-    RelayState {
-        addr: String,
-        state: RelayState,
-    },
+    RelayState { addr: String, state: RelayState },
     #[serde(rename = "neighbor_discovered")]
-    NeighborDiscovered {
-        ip: String,
-    },
+    NeighborDiscovered { ip: String },
     #[serde(rename = "error")]
-    Error {
-        message: String,
-    },
+    Error { message: String },
     #[serde(rename = "port_registered")]
-    PortRegistered {
-        port: u16,
-    },
+    PortRegistered { port: u16 },
 }
 
 impl StatusUpdate {
@@ -427,8 +418,8 @@ impl WebEngine {
     /// Process incoming message
     #[wasm_bindgen(js_name = "processMessage")]
     pub fn process_message(&self, data: &[u8], from_addr: &str) -> Result<(), JsValue> {
-        let msg = Message::parse(data)
-            .map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
+        let msg =
+            Message::parse(data).map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
 
         // Find relay by address
         let idx = {

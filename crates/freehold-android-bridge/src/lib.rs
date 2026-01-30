@@ -71,7 +71,9 @@ pub fn shutdown_runtime() {
 }
 
 fn get_runtime() -> &'static Runtime {
-    RUNTIME.get().expect("Runtime not initialized - call init_runtime() first")
+    RUNTIME
+        .get()
+        .expect("Runtime not initialized - call init_runtime() first")
 }
 
 /// Connection state visible to Kotlin
@@ -205,10 +207,8 @@ impl FreeholdTunnel {
                 match update {
                     StatusUpdate::RelayState { addr, state } => {
                         let conn_state = ConnectionState::from(state);
-                        callback_clone.on_state_changed(
-                            conn_state,
-                            format!("Relay {} -> {:?}", addr, state),
-                        );
+                        callback_clone
+                            .on_state_changed(conn_state, format!("Relay {} -> {:?}", addr, state));
                     }
                     StatusUpdate::NeighborDiscovered(ip) => {
                         callback_clone.on_neighbor_discovered(ip.to_string());
@@ -251,10 +251,8 @@ impl FreeholdTunnel {
         get_runtime().spawn(async move {
             match service.run(shutdown_rx).await {
                 Ok(_) => {
-                    callback_final.on_state_changed(
-                        ConnectionState::Disconnected,
-                        "Tunnel stopped".into(),
-                    );
+                    callback_final
+                        .on_state_changed(ConnectionState::Disconnected, "Tunnel stopped".into());
                 }
                 Err(e) => {
                     callback_final.on_error(format!("Tunnel error: {}", e));
@@ -302,7 +300,8 @@ impl FreeholdTunnel {
             return Err(TunnelError::NotRunning);
         }
 
-        self.tx_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
+        self.tx_bytes
+            .fetch_add(packet.len() as u64, Ordering::Relaxed);
 
         // In a "fake VPN" setup, we intercept the packet and could:
         // 1. Parse IP headers to determine destination
@@ -317,7 +316,8 @@ impl FreeholdTunnel {
             return Err(TunnelError::NotRunning);
         }
 
-        self.rx_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
+        self.rx_bytes
+            .fetch_add(packet.len() as u64, Ordering::Relaxed);
         Ok(packet)
     }
 

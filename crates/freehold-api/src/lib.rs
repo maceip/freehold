@@ -85,10 +85,16 @@ pub enum Message {
     Register { port: u16 },
 
     /// Server -> Client: Challenge with cookie to prove IP ownership
-    Challenge { port: u16, cookie: [u8; COOKIE_SIZE] },
+    Challenge {
+        port: u16,
+        cookie: [u8; COOKIE_SIZE],
+    },
 
     /// Client -> Server: Echo cookie to confirm registration
-    Confirm { port: u16, cookie: [u8; COOKIE_SIZE] },
+    Confirm {
+        port: u16,
+        cookie: [u8; COOKIE_SIZE],
+    },
 
     /// Client -> Server: Keep registration alive
     Heartbeat { port: u16 },
@@ -250,11 +256,10 @@ mod tests {
 
     #[test]
     fn roundtrip_neighbors() {
-        let addrs = vec![
-            Ipv4Addr::new(10, 0, 0, 1),
-            Ipv4Addr::new(10, 0, 0, 2),
-        ];
-        let msg = Message::Neighbors { addrs: addrs.clone() };
+        let addrs = vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)];
+        let msg = Message::Neighbors {
+            addrs: addrs.clone(),
+        };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         assert!(matches!(parsed, Message::Neighbors { addrs: a } if a == addrs));
