@@ -1,0 +1,20 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "private-key"
+description = "Private Key"
+regex = '''-----BEGIN[ A-Z]*PRIVATE KEY-----'''
+keywords = ["-----BEGIN"]
+
+# Allowlist for false positives
+[rules.allowlist]
+paths = [
+    # Example files with placeholder/documentation keys
+    '''\.env\.example$''',
+    # CI workflow contains grep patterns for scanning (not actual keys)
+    '''\.github/workflows/ci\.yml$''',
+]
