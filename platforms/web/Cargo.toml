@@ -6,6 +6,9 @@ license = "Apache-2.0"
 repository = "https://github.com/maceip/freehold"
 description = "Freehold Web Platform - WASM client with Direct Sockets API"
 
+# Standalone crate - not part of parent workspace
+[workspace]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
