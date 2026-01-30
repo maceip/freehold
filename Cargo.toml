@@ -18,6 +18,7 @@ exclude = [
     "platforms/linux",
     "platforms/web",
     "platforms/android",
+    "platforms/ios/FreeholdFFI",
 ]
 
 [workspace.package]
