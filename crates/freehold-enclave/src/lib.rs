@@ -107,36 +107,10 @@ impl Enclave {
             .any(|&bucket| &self.generate_cookie(ip, port, bucket).bytes == cookie)
     }
 
-    /// Generate an SGX attestation quote with the given nonce
-    ///
-    /// The nonce is included in the quote's report_data field to prove freshness.
-    /// Returns the quote and verification collateral.
-    #[cfg(all(feature = "sgx", target_os = "linux"))]
-    pub fn generate_quote(&self, nonce: &[u8; ATTESTATION_NONCE_SIZE]) -> Result<AttestationQuote> {
-        use dcap_ql::quote::{Quote, Report};
-
-        // Create report_data with nonce in first 32 bytes
-        let mut report_data = [0u8; 64];
-        report_data[..ATTESTATION_NONCE_SIZE].copy_from_slice(nonce);
-
-        // Generate quote using DCAP
-        let quote = Quote::generate(&report_data)
-            .map_err(|e| EnclaveError::QuoteGenerationFailed(e.to_string()))?;
-
-        // Fetch collateral for offline verification
-        let collateral = dcap_ql::collateral::get_collateral(&quote)
-            .map_err(|e| EnclaveError::QuoteGenerationFailed(format!("collateral: {}", e)))?;
-
-        let collateral_json = serde_json::to_vec(&collateral)
-            .map_err(|e| EnclaveError::QuoteGenerationFailed(format!("serialize: {}", e)))?;
-
-        Ok(AttestationQuote {
-            quote: quote.as_bytes().to_vec(),
-            collateral: collateral_json,
-        })
-    }
-
     /// Mock quote generation for testing without SGX hardware
+    ///
+    /// Note: Real SGX quote generation requires running inside a Gramine enclave.
+    /// This mock implementation allows testing the attestation flow without SGX.
     #[cfg(feature = "mock-attestation")]
     pub fn generate_quote(&self, nonce: &[u8; ATTESTATION_NONCE_SIZE]) -> Result<AttestationQuote> {
         // Create report_data with nonce in first 32 bytes
@@ -165,9 +139,15 @@ impl Enclave {
         Ok(AttestationQuote { quote, collateral })
     }
 
-    /// No-op quote generation when neither SGX nor mock is enabled
-    #[cfg(not(any(feature = "sgx", feature = "mock-attestation")))]
-    pub fn generate_quote(&self, _nonce: &[u8; ATTESTATION_NONCE_SIZE]) -> Result<AttestationQuote> {
+    /// No-op quote generation when mock is not enabled
+    ///
+    /// Real SGX attestation requires running inside a Gramine enclave with
+    /// RA-TLS or direct DCAP quote generation via /dev/attestation/quote.
+    #[cfg(not(feature = "mock-attestation"))]
+    pub fn generate_quote(
+        &self,
+        _nonce: &[u8; ATTESTATION_NONCE_SIZE],
+    ) -> Result<AttestationQuote> {
         Err(EnclaveError::AttestationNotAvailable)
     }
 

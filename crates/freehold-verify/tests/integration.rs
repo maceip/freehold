@@ -20,7 +20,9 @@ struct MockServer {
 impl MockServer {
     fn new(mrenclave: MrEnclave) -> (Self, SocketAddr) {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
         let addr = socket.local_addr().unwrap();
 
         let secret = [0xAB; 32];
@@ -89,7 +91,9 @@ fn test_verify_against_mock_server() {
 
     // --- Client verification ---
     let client = UdpSocket::bind("127.0.0.1:0").unwrap();
-    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
 
     // Generate nonce
     let nonce: [u8; ATTESTATION_NONCE_SIZE] = rand::random();
@@ -104,7 +108,10 @@ fn test_verify_against_mock_server() {
     let response = Message::parse(&buf[..len]).unwrap();
 
     match response {
-        Message::AttestationResponse { quote, collateral: _ } => {
+        Message::AttestationResponse {
+            quote,
+            collateral: _,
+        } => {
             // Verify nonce
             let extracted_nonce = extract_nonce(&quote).unwrap();
             assert_eq!(extracted_nonce, nonce);
@@ -137,7 +144,9 @@ fn test_detect_wrong_mrenclave() {
     thread::sleep(Duration::from_millis(50));
 
     let client = UdpSocket::bind("127.0.0.1:0").unwrap();
-    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
 
     let nonce: [u8; ATTESTATION_NONCE_SIZE] = rand::random();
     let request = Message::AttestationRequest { nonce };
@@ -178,7 +187,9 @@ fn test_multiple_concurrent_verifications() {
             let addr = addr;
             thread::spawn(move || {
                 let client = UdpSocket::bind("127.0.0.1:0").unwrap();
-                client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                client
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
 
                 let nonce: [u8; ATTESTATION_NONCE_SIZE] = [i as u8; ATTESTATION_NONCE_SIZE];
                 let request = Message::AttestationRequest { nonce };

@@ -23,7 +23,9 @@ fn test_attestation_message_roundtrip() {
     // Deserialize
     let parsed = Message::parse(&bytes).unwrap();
     match parsed {
-        Message::AttestationRequest { nonce: parsed_nonce } => {
+        Message::AttestationRequest {
+            nonce: parsed_nonce,
+        } => {
             assert_eq!(parsed_nonce, nonce);
         }
         _ => panic!("Expected AttestationRequest"),
@@ -140,7 +142,10 @@ fn test_verification_flow_simulation() {
     let parsed_response = Message::parse(&response_bytes).unwrap();
 
     match parsed_response {
-        Message::AttestationResponse { quote, collateral: _ } => {
+        Message::AttestationResponse {
+            quote,
+            collateral: _,
+        } => {
             // Verify nonce (freshness)
             let extracted_nonce = extract_nonce(&quote).unwrap();
             assert_eq!(extracted_nonce, nonce, "Nonce mismatch - replay attack?");

@@ -117,9 +117,7 @@ pub enum Message {
 
     /// Client -> Server: Request SGX attestation quote
     /// Nonce ensures freshness (prevents replay attacks)
-    AttestationRequest {
-        nonce: [u8; ATTESTATION_NONCE_SIZE],
-    },
+    AttestationRequest { nonce: [u8; ATTESTATION_NONCE_SIZE] },
 
     /// Server -> Client: SGX attestation quote with collateral
     /// Quote contains MRENCLAVE and includes nonce in report_data
@@ -239,7 +237,8 @@ impl Message {
                     });
                 }
                 let quote = data[4..4 + quote_len].to_vec();
-                let collateral_len = BigEndian::read_u16(&data[4 + quote_len..6 + quote_len]) as usize;
+                let collateral_len =
+                    BigEndian::read_u16(&data[4 + quote_len..6 + quote_len]) as usize;
                 if data.len() < 6 + quote_len + collateral_len {
                     return Err(ProtocolError::TooShort {
                         expected: 6 + quote_len + collateral_len,
@@ -308,7 +307,10 @@ impl Message {
                 buf.extend_from_slice(quote);
                 let collateral_offset = buf.len();
                 buf.extend_from_slice(&[0, 0]);
-                BigEndian::write_u16(&mut buf[collateral_offset..collateral_offset + 2], collateral.len() as u16);
+                BigEndian::write_u16(
+                    &mut buf[collateral_offset..collateral_offset + 2],
+                    collateral.len() as u16,
+                );
                 buf.extend_from_slice(collateral);
                 buf
             }

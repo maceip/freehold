@@ -16,20 +16,14 @@ path = "src/main.rs"
 freehold-api.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
-serde_json = "1.0"
+serde_json.workspace = true
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 thiserror.workspace = true
 
-# For quote generation (optional, only on SGX platforms)
-[target.'cfg(target_os = "linux")'.dependencies]
-# DCAP quote generation
-dcap-ql = { version = "0.3", optional = true }
-
 [features]
 default = []
-# Enable SGX quote generation (requires SGX hardware + Gramine)
-sgx = ["dcap-ql"]
-# Mock attestation for testing without SGX
+# Mock attestation for testing without SGX hardware
+# Real SGX attestation happens via Gramine's RA-TLS or direct DCAP calls
 mock-attestation = []

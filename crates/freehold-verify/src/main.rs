@@ -114,10 +114,7 @@ fn cmd_verify(relay: SocketAddr, expected_mrenclave_hex: &str, timeout_secs: u64
     let expected_bytes = hex::decode(expected_mrenclave_hex.trim_start_matches("0x"))
         .context("invalid MRENCLAVE hex")?;
     if expected_bytes.len() != 32 {
-        bail!(
-            "MRENCLAVE must be 32 bytes, got {}",
-            expected_bytes.len()
-        );
+        bail!("MRENCLAVE must be 32 bytes, got {}", expected_bytes.len());
     }
     let mut expected_mrenclave: MrEnclave = [0u8; 32];
     expected_mrenclave.copy_from_slice(&expected_bytes);
@@ -261,8 +258,7 @@ fn fetch_attestation(
         .recv_from(&mut buf)
         .context("receive attestation response")?;
 
-    let response =
-        Message::parse(&buf[..len]).context("parse attestation response")?;
+    let response = Message::parse(&buf[..len]).context("parse attestation response")?;
 
     match response {
         Message::AttestationResponse { quote, collateral } => Ok((quote, collateral)),
