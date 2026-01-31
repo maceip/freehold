@@ -73,11 +73,11 @@ jobs:
 
           # Find and copy the built libraries
           echo "=== Looking for built libraries ==="
-          find target -name "libfreehold_android_bridge.so" -type f 2>/dev/null || true
+          find target -name "libfreehold_android.so" -type f 2>/dev/null || true
 
-          cp target/aarch64-linux-android/release/libfreehold_android_bridge.so jniLibs/arm64-v8a/
-          cp target/armv7-linux-androideabi/release/libfreehold_android_bridge.so jniLibs/armeabi-v7a/
-          cp target/x86_64-linux-android/release/libfreehold_android_bridge.so jniLibs/x86_64/
+          cp target/aarch64-linux-android/release/libfreehold_android.so jniLibs/arm64-v8a/
+          cp target/armv7-linux-androideabi/release/libfreehold_android.so jniLibs/armeabi-v7a/
+          cp target/x86_64-linux-android/release/libfreehold_android.so jniLibs/x86_64/
 
           echo "=== Built libraries ==="
           find jniLibs -name "*.so" -exec ls -lh {} \;
