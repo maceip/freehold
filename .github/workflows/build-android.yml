@@ -58,9 +58,8 @@ jobs:
             ${{ runner.os }}-cargo-android-
 
       - name: Build native libraries
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
         run: |
+          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
           cd crates/freehold-android-bridge
 
           # Build for each architecture
