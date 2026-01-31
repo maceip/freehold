@@ -94,10 +94,7 @@ mod linux_impl {
             .css_classes(["dim-label"])
             .build();
 
-        let status_icon = Label::builder()
-            .label("⬡")
-            .css_classes(["title-1"])
-            .build();
+        let status_icon = Label::builder().label("⬡").css_classes(["title-1"]).build();
 
         // Update status periodically
         let status_label_clone = status_label.clone();
@@ -160,9 +157,7 @@ pub async fn run(mut engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) ->
     let port = engine.port();
 
     // Spawn engine
-    let engine_handle = tokio::spawn(async move {
-        engine.run().await
-    });
+    let engine_handle = tokio::spawn(async move { engine.run().await });
 
     #[cfg(target_os = "linux")]
     {

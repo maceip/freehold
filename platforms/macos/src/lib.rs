@@ -18,9 +18,7 @@ mod macos_impl {
         NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu, NSMenuItem,
         NSStatusBar, NSStatusItem,
     };
-    use objc2_foundation::{
-        ns_string, MainThreadMarker, NSObject, NSObjectProtocol, NSString,
-    };
+    use objc2_foundation::{ns_string, MainThreadMarker, NSObject, NSObjectProtocol, NSString};
     use std::cell::Cell;
     use std::sync::atomic::{AtomicU16, Ordering};
     use std::sync::Mutex;
@@ -239,9 +237,7 @@ mod macos_impl {
 pub async fn run(mut engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) -> Result<()> {
     let port = engine.port();
 
-    let engine_handle = tokio::spawn(async move {
-        engine.run().await
-    });
+    let engine_handle = tokio::spawn(async move { engine.run().await });
 
     #[cfg(target_os = "macos")]
     {

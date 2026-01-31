@@ -60,7 +60,12 @@ mod windows_impl {
 
         // Fill with transparent color (magenta = transparent in icons)
         let brush = CreateSolidBrush(COLORREF(0x00FF00FF)); // Magenta
-        let rect = RECT { left: 0, top: 0, right: size, bottom: size };
+        let rect = RECT {
+            left: 0,
+            top: 0,
+            right: size,
+            bottom: size,
+        };
         FillRect(mem_dc, &rect, brush);
         let _ = DeleteObject(brush);
 
@@ -144,15 +149,12 @@ mod windows_impl {
     /// Get icon for current state
     unsafe fn get_state_icon(state: RelayState) -> HICON {
         match state {
-            RelayState::Connected => {
-                ICON_CONNECTED.lock().unwrap().unwrap_or(HICON::default())
-            }
-            RelayState::Pending => {
-                ICON_PENDING.lock().unwrap().unwrap_or(HICON::default())
-            }
-            RelayState::Disconnected => {
-                ICON_DISCONNECTED.lock().unwrap().unwrap_or(HICON::default())
-            }
+            RelayState::Connected => ICON_CONNECTED.lock().unwrap().unwrap_or(HICON::default()),
+            RelayState::Pending => ICON_PENDING.lock().unwrap().unwrap_or(HICON::default()),
+            RelayState::Disconnected => ICON_DISCONNECTED
+                .lock()
+                .unwrap()
+                .unwrap_or(HICON::default()),
         }
     }
 
@@ -230,7 +232,8 @@ mod windows_impl {
                                 info!("Relay {} -> {:?}", addr, state);
                                 // Post message to update tray
                                 let hwnd = HWND(hwnd_raw as *mut _);
-                                let _ = PostMessageW(Some(hwnd), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
+                                let _ =
+                                    PostMessageW(Some(hwnd), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
                             }
                             StatusUpdate::NeighborDiscovered(ip) => {
                                 info!("Discovered neighbor: {}", ip);
@@ -247,7 +250,8 @@ mod windows_impl {
                                 CURRENT_PORT.store(port, Ordering::Relaxed);
                                 // Update tray icon
                                 let hwnd = HWND(hwnd_raw as *mut _);
-                                let _ = PostMessageW(Some(hwnd), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
+                                let _ =
+                                    PostMessageW(Some(hwnd), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
                             }
                         }
                     }
@@ -357,7 +361,13 @@ mod windows_impl {
             RelayState::Disconnected => w!("○ Disconnected"),
         };
 
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, IDM_STATUS as usize, status_text).unwrap();
+        AppendMenuW(
+            menu,
+            MF_STRING | MF_GRAYED,
+            IDM_STATUS as usize,
+            status_text,
+        )
+        .unwrap();
 
         let port_str: Vec<u16> = format!("Port: {}\0", port).encode_utf16().collect();
         AppendMenuW(
@@ -368,11 +378,10 @@ mod windows_impl {
         )
         .unwrap();
 
-        let traffic_str: Vec<u16> = format!(
-            "↑ {}  ↓ {}\0",
-            format_bytes(sent),
-            format_bytes(received)
-        ).encode_utf16().collect();
+        let traffic_str: Vec<u16> =
+            format!("↑ {}  ↓ {}\0", format_bytes(sent), format_bytes(received))
+                .encode_utf16()
+                .collect();
         AppendMenuW(
             menu,
             MF_STRING | MF_GRAYED,
@@ -382,7 +391,13 @@ mod windows_impl {
         .unwrap();
 
         AppendMenuW(menu, MF_SEPARATOR, 0, None).unwrap();
-        AppendMenuW(menu, MF_STRING, IDM_NEW_ENDPOINT as usize, w!("Get New Endpoint")).unwrap();
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            IDM_NEW_ENDPOINT as usize,
+            w!("Get New Endpoint"),
+        )
+        .unwrap();
         AppendMenuW(menu, MF_SEPARATOR, 0, None).unwrap();
         AppendMenuW(menu, MF_STRING, IDM_EXIT as usize, w!("Exit")).unwrap();
 
@@ -449,18 +464,16 @@ pub async fn run(mut engine: Engine, status_rx: mpsc::Receiver<StatusUpdate>) ->
     engine.set_command_rx(cmd_rx);
 
     // Spawn engine
-    let engine_handle = tokio::spawn(async move {
-        engine.run().await
-    });
+    let engine_handle = tokio::spawn(async move { engine.run().await });
 
     #[cfg(target_os = "windows")]
     {
         // Run Windows UI on separate thread (blocking)
-        let ui_handle = std::thread::spawn(move || {
-            windows_impl::run_ui(status_rx, cmd_tx, port)
-        });
+        let ui_handle = std::thread::spawn(move || windows_impl::run_ui(status_rx, cmd_tx, port));
 
-        ui_handle.join().map_err(|_| anyhow::anyhow!("UI thread panicked"))??;
+        ui_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("UI thread panicked"))??;
     }
 
     #[cfg(not(target_os = "windows"))]
