@@ -109,6 +109,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Check signing secrets
+        id: check-secrets
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "HAS_SIGNING_SECRETS=true" >> $GITHUB_ENV
+          else
+            echo "HAS_SIGNING_SECRETS=false" >> $GITHUB_ENV
+          fi
+
       - name: Install Build Tools
         run: sdkmanager "build-tools;34.0.0"
 
@@ -116,7 +125,7 @@ jobs:
         uses: gradle/gradle-build-action@v3
 
       - name: Decode keystore
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING_SECRETS == 'true' }}
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/release.keystore
 
@@ -125,7 +134,7 @@ jobs:
         run: ./gradlew :app:assembleDebug
 
       - name: Sign APK (if secrets available)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING_SECRETS == 'true' }}
         env:
           KEYSTORE: ${{ github.workspace }}/release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -144,7 +153,7 @@ jobs:
             platforms/android/app/build/outputs/apk/debug/freehold-debug-signed.apk
 
       - name: Attest APK (if signed)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING_SECRETS == 'true' }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: platforms/android/app/build/outputs/apk/debug/freehold-debug-signed.apk
