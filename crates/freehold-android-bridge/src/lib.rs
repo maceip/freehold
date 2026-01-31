@@ -29,9 +29,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use anyhow::Context;
 use freehold_client_core::{
-    generate_self_signed_cert, Engine, H3Proxy, H3ProxyConfig, RelayState, StatusUpdate,
+    generate_self_signed_cert, H3Proxy, H3ProxyConfig, RelayState, StatusUpdate,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, watch};
@@ -128,6 +127,31 @@ pub trait StatusCallback: Send + Sync {
     fn on_bytes_transferred(&self, rx: u64, tx: u64);
 }
 
+/// Wrapper to make callback Arc-compatible for async use
+struct CallbackWrapper(Box<dyn StatusCallback>);
+
+// Safety: StatusCallback requires Send + Sync
+unsafe impl Send for CallbackWrapper {}
+unsafe impl Sync for CallbackWrapper {}
+
+impl CallbackWrapper {
+    fn on_state_changed(&self, state: ConnectionState, message: String) {
+        self.0.on_state_changed(state, message);
+    }
+    fn on_port_assigned(&self, port: u16) {
+        self.0.on_port_assigned(port);
+    }
+    fn on_neighbor_discovered(&self, ip: String) {
+        self.0.on_neighbor_discovered(ip);
+    }
+    fn on_error(&self, error: String) {
+        self.0.on_error(error);
+    }
+    fn on_bytes_transferred(&self, rx: u64, tx: u64) {
+        self.0.on_bytes_transferred(rx, tx);
+    }
+}
+
 /// Tunnel configuration from Kotlin
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct TunnelConfig {
@@ -142,27 +166,27 @@ pub struct TunnelConfig {
 #[derive(uniffi::Object)]
 pub struct FreeholdTunnel {
     config: TunnelConfig,
-    callback: Arc<dyn StatusCallback>,
-    running: AtomicBool,
+    callback: Arc<CallbackWrapper>,
+    running: Arc<AtomicBool>,
     state: Mutex<ConnectionState>,
     shutdown_tx: Mutex<Option<watch::Sender<bool>>>,
-    rx_bytes: AtomicU64,
-    tx_bytes: AtomicU64,
+    rx_bytes: Arc<AtomicU64>,
+    tx_bytes: Arc<AtomicU64>,
 }
 
 #[uniffi::export]
 impl FreeholdTunnel {
     /// Create a new tunnel instance
     #[uniffi::constructor]
-    pub fn new(config: TunnelConfig, callback: Arc<dyn StatusCallback>) -> Self {
+    pub fn new(config: TunnelConfig, callback: Box<dyn StatusCallback>) -> Self {
         Self {
             config,
-            callback,
-            running: AtomicBool::new(false),
+            callback: Arc::new(CallbackWrapper(callback)),
+            running: Arc::new(AtomicBool::new(false)),
             state: Mutex::new(ConnectionState::Disconnected),
             shutdown_tx: Mutex::new(None),
-            rx_bytes: AtomicU64::new(0),
-            tx_bytes: AtomicU64::new(0),
+            rx_bytes: Arc::new(AtomicU64::new(0)),
+            tx_bytes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -201,7 +225,7 @@ impl FreeholdTunnel {
 
         // Spawn status handler
         let callback_clone = Arc::clone(&self.callback);
-        let running = self.running.clone();
+        let _running = Arc::clone(&self.running);
         get_runtime().spawn(async move {
             while let Some(update) = status_rx.recv().await {
                 match update {
@@ -215,6 +239,12 @@ impl FreeholdTunnel {
                     }
                     StatusUpdate::Error(msg) => {
                         callback_clone.on_error(msg);
+                    }
+                    StatusUpdate::Traffic { sent, received } => {
+                        callback_clone.on_bytes_transferred(received, sent);
+                    }
+                    StatusUpdate::PortChanged { port } => {
+                        callback_clone.on_port_assigned(port);
                     }
                 }
             }
@@ -336,7 +366,7 @@ pub struct H3ProxyBridge {
     bind_address: SocketAddr,
     backend_address: SocketAddr,
     domain: String,
-    running: AtomicBool,
+    running: Arc<AtomicBool>,
     shutdown_tx: Mutex<Option<watch::Sender<bool>>>,
 }
 
@@ -361,7 +391,7 @@ impl H3ProxyBridge {
             bind_address: bind_addr,
             backend_address: backend_addr,
             domain,
-            running: AtomicBool::new(false),
+            running: Arc::new(AtomicBool::new(false)),
             shutdown_tx: Mutex::new(None),
         })
     }
@@ -385,7 +415,7 @@ impl H3ProxyBridge {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
 
-        let running = self.running.clone();
+        let running = Arc::clone(&self.running);
         get_runtime().spawn(async move {
             if let Err(e) = proxy.run(shutdown_rx).await {
                 tracing::error!("H3 proxy error: {}", e);
