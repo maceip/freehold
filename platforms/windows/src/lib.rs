@@ -34,6 +34,12 @@ mod windows_impl {
     const IDM_NEW_ENDPOINT: u32 = 103;
     const IDM_EXIT: u32 = 104;
 
+    // Wrapper for HICON to implement Send/Sync (safe because icons are only accessed from the Windows message thread)
+    #[derive(Clone, Copy)]
+    struct SendableIcon(HICON);
+    unsafe impl Send for SendableIcon {}
+    unsafe impl Sync for SendableIcon {}
+
     static CURRENT_STATE: Mutex<RelayState> = Mutex::new(RelayState::Disconnected);
     static CURRENT_PORT: AtomicU16 = AtomicU16::new(0);
     static BYTES_SENT: AtomicU64 = AtomicU64::new(0);
@@ -42,9 +48,9 @@ mod windows_impl {
     static COMMAND_TX: Mutex<Option<mpsc::Sender<EngineCommand>>> = Mutex::new(None);
 
     // Custom icon state
-    static ICON_CONNECTED: Mutex<Option<HICON>> = Mutex::new(None);
-    static ICON_DISCONNECTED: Mutex<Option<HICON>> = Mutex::new(None);
-    static ICON_PENDING: Mutex<Option<HICON>> = Mutex::new(None);
+    static ICON_CONNECTED: Mutex<Option<SendableIcon>> = Mutex::new(None);
+    static ICON_DISCONNECTED: Mutex<Option<SendableIcon>> = Mutex::new(None);
+    static ICON_PENDING: Mutex<Option<SendableIcon>> = Mutex::new(None);
 
     /// Create a simple colored circle icon
     unsafe fn create_status_icon(color: COLORREF) -> Result<HICON> {
@@ -133,15 +139,15 @@ mod windows_impl {
     unsafe fn init_icons() -> Result<()> {
         // Green for connected
         let connected = create_status_icon(COLORREF(0x0000FF00))?; // Green (BGR)
-        *ICON_CONNECTED.lock().unwrap() = Some(connected);
+        *ICON_CONNECTED.lock().unwrap() = Some(SendableIcon(connected));
 
         // Red for disconnected
         let disconnected = create_status_icon(COLORREF(0x000000FF))?; // Red (BGR)
-        *ICON_DISCONNECTED.lock().unwrap() = Some(disconnected);
+        *ICON_DISCONNECTED.lock().unwrap() = Some(SendableIcon(disconnected));
 
         // Yellow/Orange for pending
         let pending = create_status_icon(COLORREF(0x0000A5FF))?; // Orange (BGR)
-        *ICON_PENDING.lock().unwrap() = Some(pending);
+        *ICON_PENDING.lock().unwrap() = Some(SendableIcon(pending));
 
         Ok(())
     }
@@ -149,11 +155,12 @@ mod windows_impl {
     /// Get icon for current state
     unsafe fn get_state_icon(state: RelayState) -> HICON {
         match state {
-            RelayState::Connected => ICON_CONNECTED.lock().unwrap().unwrap_or(HICON::default()),
-            RelayState::Pending => ICON_PENDING.lock().unwrap().unwrap_or(HICON::default()),
+            RelayState::Connected => ICON_CONNECTED.lock().unwrap().map(|s| s.0).unwrap_or(HICON::default()),
+            RelayState::Pending => ICON_PENDING.lock().unwrap().map(|s| s.0).unwrap_or(HICON::default()),
             RelayState::Disconnected => ICON_DISCONNECTED
                 .lock()
                 .unwrap()
+                .map(|s| s.0)
                 .unwrap_or(HICON::default()),
         }
     }
