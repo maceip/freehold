@@ -1,0 +1,23 @@
+# Rust build output
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Gramine artifacts (generated, not committed)
+*.manifest
+*.manifest.sgx
+*.sig
+*.token
+enclave-key.pem
