@@ -53,7 +53,12 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: |
+          # Exclude platform crates that can only build on their native platforms
+          cargo clippy --workspace --all-targets --all-features \
+            --exclude freehold-platform-windows \
+            --exclude freehold-android-bridge \
+            -- -D warnings
 
   # ============================================
   # SECRETS / KEY MATERIAL SCAN
