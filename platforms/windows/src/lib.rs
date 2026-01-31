@@ -155,8 +155,16 @@ mod windows_impl {
     /// Get icon for current state
     unsafe fn get_state_icon(state: RelayState) -> HICON {
         match state {
-            RelayState::Connected => ICON_CONNECTED.lock().unwrap().map(|s| s.0).unwrap_or(HICON::default()),
-            RelayState::Pending => ICON_PENDING.lock().unwrap().map(|s| s.0).unwrap_or(HICON::default()),
+            RelayState::Connected => ICON_CONNECTED
+                .lock()
+                .unwrap()
+                .map(|s| s.0)
+                .unwrap_or(HICON::default()),
+            RelayState::Pending => ICON_PENDING
+                .lock()
+                .unwrap()
+                .map(|s| s.0)
+                .unwrap_or(HICON::default()),
             RelayState::Disconnected => ICON_DISCONNECTED
                 .lock()
                 .unwrap()
