@@ -288,8 +288,7 @@ async fn process_xdp_events(
                 let events = buf.read_events(&mut buffers).await;
                 match events {
                     Ok(events) => {
-                        for i in 0..events.read {
-                            let buf = &buffers[i];
+                        for buf in buffers.iter().take(events.read) {
                             if buf.len() >= XdpEvent::SIZE {
                                 let event: XdpEvent = unsafe {
                                     std::ptr::read_unaligned(buf.as_ptr() as *const XdpEvent)

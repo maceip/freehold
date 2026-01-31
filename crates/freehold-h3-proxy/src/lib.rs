@@ -120,8 +120,6 @@ async fn handle_connection(incoming: quinn::Incoming, backend: SocketAddr) -> Re
     loop {
         match h3_conn.accept().await {
             Ok(Some(resolver)) => {
-                let backend = backend;
-                let remote = remote;
                 tokio::spawn(async move {
                     match resolver.resolve_request().await {
                         Ok((request, stream)) => {
