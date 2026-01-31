@@ -3,6 +3,9 @@ name = "freehold-platform-linux"
 version = "0.1.0"
 edition = "2021"
 
+# Exclude from parent workspace when building standalone
+[workspace]
+
 [dependencies]
 freehold-client-core = { path = "../../crates/freehold-client-core" }
 tokio = { version = "1", features = ["full"] }

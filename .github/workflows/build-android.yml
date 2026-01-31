@@ -1,0 +1,159 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'platforms/android/**'
+      - 'crates/freehold-android-bridge/**'
+      - 'crates/freehold-client-core/**'
+      - 'crates/freehold-api/**'
+      - '.github/workflows/build-android.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'platforms/android/**'
+      - 'crates/freehold-android-bridge/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-native:
+    name: Build Rust Native Library
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager "ndk;27.2.12479018"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-android-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-android-
+
+      - name: Build native libraries
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: |
+          cd crates/freehold-android-bridge
+
+          # Build for each architecture
+          for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android; do
+            echo "Building for $target..."
+            cargo ndk -t $target build --release
+          done
+
+      - name: Prepare JNI libs
+        run: |
+          mkdir -p jniLibs/arm64-v8a jniLibs/armeabi-v7a jniLibs/x86_64
+
+          cp target/aarch64-linux-android/release/libfreehold_android_bridge.so jniLibs/arm64-v8a/
+          cp target/armv7-linux-androideabi/release/libfreehold_android_bridge.so jniLibs/armeabi-v7a/
+          cp target/x86_64-linux-android/release/libfreehold_android_bridge.so jniLibs/x86_64/
+
+          echo "=== Built libraries ==="
+          find jniLibs -name "*.so" -exec ls -lh {} \;
+
+      - name: Upload native libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-native-libs
+          path: jniLibs/
+          retention-days: 1
+
+  build-apk:
+    name: Build & Sign APK
+    runs-on: ubuntu-latest
+    needs: build-native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download native libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: android-native-libs
+          path: platforms/android/app/src/main/jniLibs/
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Build Tools
+        run: sdkmanager "build-tools;34.0.0"
+
+      - name: Configure Gradle cache
+        uses: gradle/gradle-build-action@v3
+
+      - name: Decode keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/release.keystore
+
+      - name: Build debug APK
+        working-directory: platforms/android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Sign APK (if secrets available)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE: ${{ github.workspace }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass pass:"$KEYSTORE_PASSWORD" \
+            --key-pass pass:"$KEY_PASSWORD" \
+            --out platforms/android/app/build/outputs/apk/debug/freehold-debug-signed.apk \
+            platforms/android/app/build/outputs/apk/debug/app-debug.apk
+
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose \
+            platforms/android/app/build/outputs/apk/debug/freehold-debug-signed.apk
+
+      - name: Attest APK (if signed)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: platforms/android/app/build/outputs/apk/debug/freehold-debug-signed.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-android-apk
+          path: |
+            platforms/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30

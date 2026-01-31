@@ -3,7 +3,19 @@ name = "freehold-platform-windows"
 version = "0.1.0"
 edition = "2021"
 
+# Exclude from parent workspace when building standalone
+[workspace]
+
+[[bin]]
+name = "freehold-windows"
+path = "src/main.rs"
+
+[lib]
+name = "freehold_platform_windows"
+path = "src/lib.rs"
+
 [dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 freehold-client-core = { path = "../../crates/freehold-client-core" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
