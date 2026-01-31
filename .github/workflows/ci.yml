@@ -262,13 +262,19 @@ jobs:
         id: build
         run: |
           echo "Building workspace..."
-          cargo build --workspace --all-targets
+          # Exclude platform crates that can only build on their native platforms
+          cargo build --workspace --all-targets \
+            --exclude freehold-platform-windows \
+            --exclude freehold-android-bridge
 
       - name: Run tests
         id: test
         run: |
           echo "Running tests..."
-          cargo test --workspace --all-targets
+          # Exclude platform crates that can only build on their native platforms
+          cargo test --workspace --all-targets \
+            --exclude freehold-platform-windows \
+            --exclude freehold-android-bridge
 
   # ============================================
   # UPDATE DEPS.MD ON SUCCESS
