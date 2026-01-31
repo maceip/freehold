@@ -90,7 +90,7 @@ jobs:
         working-directory: platforms/web/isolated-web-app
         run: |
           if [ -f package.json ]; then
-            npm install
+            npm install --legacy-peer-deps
           else
             echo "No package.json found, skipping npm install"
           fi
