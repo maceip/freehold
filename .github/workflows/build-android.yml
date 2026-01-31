@@ -84,10 +84,10 @@ jobs:
 
       - name: Generate Kotlin bindings
         run: |
-          # Install uniffi-bindgen-cli
-          cargo install uniffi-bindgen-cli --version 0.29.0
+          # Install uniffi-bindgen
+          cargo install uniffi-bindgen@0.29.0
 
-          # Generate Kotlin bindings from the UDL file
+          # Generate Kotlin bindings from the library
           mkdir -p kotlin-bindings
           uniffi-bindgen generate \
             --library target/aarch64-linux-android/release/libfreehold_android.so \
@@ -95,7 +95,7 @@ jobs:
             --out-dir kotlin-bindings
 
           echo "=== Generated Kotlin bindings ==="
-          find kotlin-bindings -type f -name "*.kt"
+          find kotlin-bindings -type f -name "*.kt" || echo "No bindings generated (may need proc-macro approach)"
 
       - name: Upload native libraries
         uses: actions/upload-artifact@v4
