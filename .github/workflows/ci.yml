@@ -40,15 +40,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: |
-          echo "Rust version: $(rustc --version)"
-          echo "Clippy version: $(cargo clippy --version)"
-          cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee clippy-output.txt
-          # Show last 100 lines if it failed
-          if [ $? -ne 0 ]; then
-            echo "=== Clippy output tail ==="
-            tail -100 clippy-output.txt
-          fi
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # ============================================
   # SECRETS / KEY MATERIAL SCAN
