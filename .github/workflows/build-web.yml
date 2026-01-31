@@ -1,0 +1,118 @@
+name: Build Web Client (WASM)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'platforms/web/**'
+      - 'crates/freehold-api/**'
+      - '.github/workflows/build-web.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'platforms/web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-wasm:
+    name: Build WASM Client
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            platforms/web/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('platforms/web/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+
+      - name: Build WASM package
+        working-directory: platforms/web
+        run: |
+          wasm-pack build --target web --release
+
+      - name: List build artifacts
+        run: |
+          echo "=== WASM package contents ==="
+          ls -la platforms/web/pkg/
+          echo ""
+          echo "=== WASM file size ==="
+          ls -lh platforms/web/pkg/*.wasm
+
+      - name: Upload WASM package
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-web-wasm
+          path: platforms/web/pkg/
+          retention-days: 30
+
+  # Build the Isolated Web App bundle
+  build-iwa:
+    name: Build IWA Bundle
+    runs-on: ubuntu-latest
+    needs: build-wasm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download WASM package
+        uses: actions/download-artifact@v4
+        with:
+          name: freehold-web-wasm
+          path: platforms/web/isolated-web-app/pkg/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install IWA dependencies
+        working-directory: platforms/web/isolated-web-app
+        run: |
+          if [ -f package.json ]; then
+            npm ci || npm install
+          else
+            echo "No package.json found, skipping npm install"
+          fi
+
+      - name: Build IWA bundle
+        working-directory: platforms/web/isolated-web-app
+        run: |
+          if [ -f package.json ] && grep -q '"build"' package.json; then
+            npm run build
+          else
+            echo "No build script found, packaging static files"
+            mkdir -p dist
+            cp -r *.html *.js *.json pkg/ dist/ 2>/dev/null || true
+          fi
+
+      - name: Upload IWA bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: freehold-iwa-bundle
+          path: |
+            platforms/web/isolated-web-app/dist/
+            platforms/web/isolated-web-app/*.html
+            platforms/web/isolated-web-app/*.json
+            platforms/web/isolated-web-app/pkg/
+          retention-days: 30
