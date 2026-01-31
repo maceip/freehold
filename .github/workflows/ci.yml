@@ -21,6 +21,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            clang \
+            llvm \
+            libglib2.0-dev \
+            libgtk-4-dev \
+            libadwaita-1-dev || true
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
