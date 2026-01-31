@@ -1,7 +1,5 @@
 //! Freehold Server - Relay daemon with stateless cookie verification
 
-mod config;
-
 use anyhow::{Context, Result};
 use aya::maps::{Array, AsyncPerfEventArray, HashMap};
 use aya::programs::{Xdp, XdpFlags};
@@ -9,20 +7,17 @@ use aya::util::online_cpus;
 use aya::Ebpf;
 use bytes::BytesMut;
 use clap::{Parser, Subcommand};
-use config::Config;
 use freehold_api::{timing, Message, COOKIE_SIZE};
 use freehold_common::{maps, EventType, Registration, XdpEvent, XDP_PROGRAM};
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use std::collections::HashMap as StdHashMap;
+use freehold_server::config::Config;
+use freehold_server::cookie::CookieAuth;
+use freehold_server::quota::QuotaTracker;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Get monotonic kernel time in nanoseconds.
 /// This matches what XDP uses (bpf_ktime_get_ns).
@@ -78,52 +73,8 @@ enum Commands {
     },
 }
 
-/// Tracks which ports an IP has registered (for quota cleanup)
-#[derive(Default)]
-struct QuotaTracker {
-    ports_by_ip: StdHashMap<Ipv4Addr, Vec<u16>>,
-    ip_by_port: StdHashMap<u16, Ipv4Addr>,
-}
-
-impl QuotaTracker {
-    fn register(&mut self, ip: Ipv4Addr, port: u16) {
-        if let Some(old_ip) = self.ip_by_port.remove(&port) {
-            if let Some(ports) = self.ports_by_ip.get_mut(&old_ip) {
-                ports.retain(|&p| p != port);
-                if ports.is_empty() {
-                    self.ports_by_ip.remove(&old_ip);
-                }
-            }
-        }
-        self.ip_by_port.insert(port, ip);
-        self.ports_by_ip.entry(ip).or_default().push(port);
-    }
-
-    fn unregister(&mut self, port: u16) {
-        if let Some(ip) = self.ip_by_port.remove(&port) {
-            if let Some(ports) = self.ports_by_ip.get_mut(&ip) {
-                ports.retain(|&p| p != port);
-                if ports.is_empty() {
-                    self.ports_by_ip.remove(&ip);
-                }
-            }
-        }
-    }
-
-    fn count(&self, ip: &Ipv4Addr) -> u32 {
-        self.ports_by_ip
-            .get(ip)
-            .map(|v| v.len() as u32)
-            .unwrap_or(0)
-    }
-
-    fn ports(&self) -> impl Iterator<Item = u16> + '_ {
-        self.ip_by_port.keys().copied()
-    }
-}
-
 struct Server {
-    secret: [u8; 32],
+    cookie_auth: CookieAuth,
     neighbors: Vec<Ipv4Addr>,
     max_ports_per_ip: u32,
     registrations: HashMap<aya::maps::MapData, u16, Registration>,
@@ -131,24 +82,6 @@ struct Server {
 }
 
 impl Server {
-    fn cookie(&self, ip: Ipv4Addr, port: u16, bucket: u64) -> [u8; COOKIE_SIZE] {
-        let mut mac =
-            HmacSha256::new_from_slice(&self.secret).expect("HMAC can accept any key size");
-        mac.update(&ip.octets());
-        mac.update(&port.to_be_bytes());
-        mac.update(&bucket.to_be_bytes());
-        let mut cookie = [0u8; COOKIE_SIZE];
-        cookie.copy_from_slice(&mac.finalize().into_bytes()[..COOKIE_SIZE]);
-        cookie
-    }
-
-    fn verify(&self, ip: Ipv4Addr, port: u16, cookie: &[u8; COOKIE_SIZE]) -> bool {
-        let bucket = time_bucket();
-        [bucket, bucket.saturating_sub(1)]
-            .iter()
-            .any(|&b| &self.cookie(ip, port, b) == cookie)
-    }
-
     async fn handle(&mut self, socket: &UdpSocket, data: &[u8], from: SocketAddr) -> Result<()> {
         let msg = match Message::parse(data) {
             Ok(m) => m,
@@ -173,13 +106,14 @@ impl Server {
                 }
 
                 let bucket = time_bucket();
-                let cookie = self.cookie(ip, port, bucket);
+                let cookie = self.cookie_auth.generate(ip, port, bucket);
                 socket.send_to(&Message::Challenge { port, cookie }.to_bytes(), from)?;
                 debug!("REGISTER {} port {} -> CHALLENGE", ip, port);
             }
 
             Message::Confirm { port, cookie } => {
-                if !self.verify(ip, port, &cookie) {
+                let current_bucket = time_bucket();
+                if !self.cookie_auth.verify_with_grace(ip, port, &cookie, current_bucket) {
                     warn!("Invalid cookie from {} for port {}", ip, port);
                     socket.send_to(&Message::Error { port }.to_bytes(), from)?;
                     return Ok(());
@@ -468,7 +402,7 @@ async fn main() -> Result<()> {
     let quotas = Arc::new(RwLock::new(QuotaTracker::default()));
 
     let mut server = Server {
-        secret,
+        cookie_auth: CookieAuth::new(secret),
         neighbors: config.neighbors.clone(),
         max_ports_per_ip: config.limits.max_ports_per_ip,
         registrations: regs,

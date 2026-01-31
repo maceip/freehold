@@ -4,6 +4,10 @@ description = "Freehold relay server daemon"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "freehold_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "freehold-server"
 path = "src/main.rs"
@@ -28,3 +32,6 @@ sha2 = "0.10"
 hex = "0.4"
 libc = "0.2"
 ipnet = { version = "2.10", features = ["serde"] }
+
+[dev-dependencies]
+proptest = "1.4"

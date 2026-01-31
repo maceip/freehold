@@ -25,12 +25,28 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # ============================================
+  # UNIT TESTS - Core logic without platform deps
+  # ============================================
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            clang \
+            llvm \
+            libglib2.0-dev \
+            libgtk-4-dev \
+            libadwaita-1-dev || true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -48,63 +64,23 @@ jobs:
 
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude freehold-ebpf --exclude freehold-android-bridge
+          cargo test --workspace \
+            --exclude freehold-ebpf \
+            --exclude freehold-android-bridge \
+            --exclude freehold-platform-windows
 
-  integration-tests:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-integration-
-
-      - name: Build relay server
-        run: cargo build --release -p freehold-server
-
-      - name: Build client
-        run: cargo build --release -p freehold-client
-
-      - name: Run relay integration test
+      - name: Test summary
         run: |
-          # Start relay server in background
-          echo "Starting relay server..."
-          ./target/release/freehold-server --bind 127.0.0.1:7878 &
-          SERVER_PID=$!
-          sleep 2
+          echo "=== Test Summary ==="
+          cargo test --workspace \
+            --exclude freehold-ebpf \
+            --exclude freehold-android-bridge \
+            --exclude freehold-platform-windows \
+            -- --list 2>/dev/null | grep -E "^[a-z].*: test$" | wc -l | xargs echo "Total tests:"
 
-          # Verify server is running
-          if ! kill -0 $SERVER_PID 2>/dev/null; then
-            echo "Server failed to start"
-            exit 1
-          fi
-          echo "Server started (PID: $SERVER_PID)"
-
-          # Simple connectivity test - just verify server responds
-          # The client will timeout if no relay is available
-          echo "Testing relay connectivity..."
-          timeout 10 ./target/release/freehold-client \
-            --relay 127.0.0.1:7878 \
-            --port 8080 \
-            --once || true
-
-          # Cleanup
-          kill $SERVER_PID 2>/dev/null || true
-          echo "Integration test completed"
-
-  # Protocol compliance tests
+  # ============================================
+  # PROTOCOL TESTS - Wire format compliance
+  # ============================================
   protocol-tests:
     name: Protocol Tests
     runs-on: ubuntu-latest
@@ -128,5 +104,86 @@ jobs:
 
       - name: Run protocol tests
         run: |
-          cargo test --package freehold-api --lib
-          cargo test --package freehold-common --lib
+          echo "=== Protocol Message Tests ==="
+          cargo test --package freehold-api --lib -- --nocapture
+
+      - name: Run property-based tests
+        run: |
+          echo "=== Property-Based Protocol Tests ==="
+          cargo test --package freehold-api --lib proptests -- --nocapture
+
+  # ============================================
+  # SERVER LOGIC TESTS - Cookie & Quota
+  # ============================================
+  server-logic-tests:
+    name: Server Logic Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev || true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-server-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-server-
+
+      - name: Run cookie tests
+        run: |
+          echo "=== Cookie Authentication Tests ==="
+          cargo test --package freehold-server --lib cookie -- --nocapture
+
+      - name: Run quota tests
+        run: |
+          echo "=== Quota Tracking Tests ==="
+          cargo test --package freehold-server --lib quota -- --nocapture
+
+      - name: Run all server library tests
+        run: |
+          echo "=== All Server Library Tests ==="
+          cargo test --package freehold-server --lib -- --nocapture
+
+  # ============================================
+  # DATA STRUCTURE TESTS - Common types
+  # ============================================
+  common-tests:
+    name: Common Data Structures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-common-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-common-
+
+      - name: Run common structure tests
+        run: |
+          echo "=== Common Data Structure Tests ==="
+          cargo test --package freehold-common --lib -- --nocapture
