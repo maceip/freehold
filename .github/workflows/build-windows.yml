@@ -48,26 +48,25 @@ jobs:
             ${{ runner.os }}-cargo-windows-
 
       - name: Build Windows client
-        working-directory: platforms/windows
-        run: cargo build --release
+        run: cargo build --release -p freehold-platform-windows
 
       - name: List build artifacts
         shell: pwsh
         run: |
           Write-Host "=== Build artifacts ==="
-          Get-ChildItem -Path platforms/windows/target/release -Filter "*.exe" | Format-Table Name, Length
+          Get-ChildItem -Path target/release -Filter "*.exe" | Format-Table Name, Length
 
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
           name: freehold-windows-client
-          path: platforms/windows/target/release/*.exe
+          path: target/release/freehold-windows.exe
           retention-days: 30
 
       - name: Attest Windows binary
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: platforms/windows/target/release/*.exe
+          subject-path: target/release/freehold-windows.exe
 
   # Cross-compile from Linux (faster, no Windows runner minutes)
   build-windows-cross:
@@ -97,14 +96,13 @@ jobs:
             ${{ runner.os }}-cargo-windows-cross-
 
       - name: Build Windows client (cross-compile)
-        working-directory: platforms/windows
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
-        run: cargo build --release --target x86_64-pc-windows-gnu
+        run: cargo build --release --target x86_64-pc-windows-gnu -p freehold-platform-windows
 
       - name: Upload cross-compiled binary
         uses: actions/upload-artifact@v4
         with:
           name: freehold-windows-client-cross
-          path: platforms/windows/target/x86_64-pc-windows-gnu/release/*.exe
+          path: target/x86_64-pc-windows-gnu/release/freehold-windows.exe
           retention-days: 30
