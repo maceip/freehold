@@ -84,8 +84,8 @@ jobs:
 
       - name: Generate Kotlin bindings
         run: |
-          # Install uniffi-bindgen
-          cargo install uniffi-bindgen@0.29.0
+          # Install uniffi_bindgen (note: underscore in package name)
+          cargo install uniffi_bindgen@0.29.0
 
           # Generate Kotlin bindings from the library
           mkdir -p kotlin-bindings
