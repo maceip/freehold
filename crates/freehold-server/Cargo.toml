@@ -28,3 +28,4 @@ sha2 = "0.10"
 hex = "0.4"
 libc = "0.2"
 ipnet = { version = "2.10", features = ["serde"] }
+serde_json.workspace = true

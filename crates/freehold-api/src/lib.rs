@@ -1,6 +1,7 @@
 //! Freehold API - Network protocol between client and server
 //!
-//! This defines the wire format for registration, heartbeat, and neighbor discovery.
+//! This defines the wire format for registration, heartbeat, neighbor discovery,
+//! and remote attestation.
 
 use byteorder::{BigEndian, ByteOrder};
 use std::net::Ipv4Addr;
@@ -13,6 +14,12 @@ pub const COOKIE_SIZE: usize = 16;
 
 /// Maximum neighbors in a NEIGHBORS response
 pub const MAX_NEIGHBORS: usize = 8;
+
+/// Attestation nonce size (for freshness)
+pub const ATTESTATION_NONCE_SIZE: usize = 32;
+
+/// Maximum attestation response size (quote + collateral)
+pub const MAX_ATTESTATION_SIZE: usize = 16384;
 
 /// Protocol timing constants
 pub mod timing {
@@ -46,6 +53,10 @@ pub enum MessageType {
     Confirm = 0x03,
     Heartbeat = 0x04,
     Neighbors = 0x05,
+    /// Request SGX attestation quote with nonce
+    AttestationRequest = 0x10,
+    /// SGX attestation quote response
+    AttestationResponse = 0x11,
     Error = 0xFF,
 }
 
@@ -59,6 +70,8 @@ impl TryFrom<u8> for MessageType {
             0x03 => Ok(Self::Confirm),
             0x04 => Ok(Self::Heartbeat),
             0x05 => Ok(Self::Neighbors),
+            0x10 => Ok(Self::AttestationRequest),
+            0x11 => Ok(Self::AttestationResponse),
             0xFF => Ok(Self::Error),
             _ => Err(ProtocolError::InvalidMessageType(value)),
         }
@@ -101,6 +114,21 @@ pub enum Message {
 
     /// Server -> Client: List of neighbor relay IPs
     Neighbors { addrs: Vec<Ipv4Addr> },
+
+    /// Client -> Server: Request SGX attestation quote
+    /// Nonce ensures freshness (prevents replay attacks)
+    AttestationRequest {
+        nonce: [u8; ATTESTATION_NONCE_SIZE],
+    },
+
+    /// Server -> Client: SGX attestation quote with collateral
+    /// Quote contains MRENCLAVE and includes nonce in report_data
+    AttestationResponse {
+        /// DCAP ECDSA quote (contains MRENCLAVE, nonce in report_data)
+        quote: Vec<u8>,
+        /// Collateral for offline verification (PCK certs, TCB info)
+        collateral: Vec<u8>,
+    },
 
     /// Server -> Client: Error response
     Error { port: u16 },
@@ -183,6 +211,44 @@ impl Message {
                     .collect();
                 Ok(Message::Neighbors { addrs })
             }
+
+            MessageType::AttestationRequest => {
+                if data.len() < 2 + ATTESTATION_NONCE_SIZE {
+                    return Err(ProtocolError::TooShort {
+                        expected: 2 + ATTESTATION_NONCE_SIZE,
+                        actual: data.len(),
+                    });
+                }
+                let mut nonce = [0u8; ATTESTATION_NONCE_SIZE];
+                nonce.copy_from_slice(&data[2..2 + ATTESTATION_NONCE_SIZE]);
+                Ok(Message::AttestationRequest { nonce })
+            }
+
+            MessageType::AttestationResponse => {
+                if data.len() < 6 {
+                    return Err(ProtocolError::TooShort {
+                        expected: 6,
+                        actual: data.len(),
+                    });
+                }
+                let quote_len = BigEndian::read_u16(&data[2..4]) as usize;
+                if data.len() < 4 + quote_len + 2 {
+                    return Err(ProtocolError::TooShort {
+                        expected: 4 + quote_len + 2,
+                        actual: data.len(),
+                    });
+                }
+                let quote = data[4..4 + quote_len].to_vec();
+                let collateral_len = BigEndian::read_u16(&data[4 + quote_len..6 + quote_len]) as usize;
+                if data.len() < 6 + quote_len + collateral_len {
+                    return Err(ProtocolError::TooShort {
+                        expected: 6 + quote_len + collateral_len,
+                        actual: data.len(),
+                    });
+                }
+                let collateral = data[6 + quote_len..6 + quote_len + collateral_len].to_vec();
+                Ok(Message::AttestationResponse { quote, collateral })
+            }
         }
     }
 
@@ -229,6 +295,23 @@ impl Message {
                 BigEndian::write_u16(&mut buf[2..4], *port);
                 buf
             }
+
+            Message::AttestationRequest { nonce } => {
+                let mut buf = vec![MAGIC, MessageType::AttestationRequest as u8];
+                buf.extend_from_slice(nonce);
+                buf
+            }
+
+            Message::AttestationResponse { quote, collateral } => {
+                let mut buf = vec![MAGIC, MessageType::AttestationResponse as u8, 0, 0];
+                BigEndian::write_u16(&mut buf[2..4], quote.len() as u16);
+                buf.extend_from_slice(quote);
+                let collateral_offset = buf.len();
+                buf.extend_from_slice(&[0, 0]);
+                BigEndian::write_u16(&mut buf[collateral_offset..collateral_offset + 2], collateral.len() as u16);
+                buf.extend_from_slice(collateral);
+                buf
+            }
         }
     }
 }
@@ -263,5 +346,31 @@ mod tests {
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         assert!(matches!(parsed, Message::Neighbors { addrs: a } if a == addrs));
+    }
+
+    #[test]
+    fn roundtrip_attestation_request() {
+        let nonce = [0x42u8; ATTESTATION_NONCE_SIZE];
+        let msg = Message::AttestationRequest { nonce };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        assert!(matches!(parsed, Message::AttestationRequest { nonce: n } if n == nonce));
+    }
+
+    #[test]
+    fn roundtrip_attestation_response() {
+        let quote = vec![1, 2, 3, 4, 5];
+        let collateral = vec![6, 7, 8, 9];
+        let msg = Message::AttestationResponse {
+            quote: quote.clone(),
+            collateral: collateral.clone(),
+        };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        assert!(matches!(
+            parsed,
+            Message::AttestationResponse { quote: q, collateral: c }
+            if q == quote && c == collateral
+        ));
     }
 }

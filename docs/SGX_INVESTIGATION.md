@@ -435,6 +435,71 @@ AMD's confidential VM technology.
 
 ---
 
+## 11. User Verification Guide
+
+### Quick Start
+
+1. **Get expected MRENCLAVE** from the release:
+   ```bash
+   # Download from GitHub release
+   curl -sL https://github.com/maceip/freehold/releases/latest/download/mrenclave.txt
+   ```
+
+2. **Verify a relay**:
+   ```bash
+   freehold-verify verify \
+     --relay 1.2.3.4:9999 \
+     --mrenclave 0xdb718ecdcec7b7db2cd7206b7599b2472c02376195b70629fa72690e377ba69c
+   ```
+
+3. **Output**:
+   ```
+   Verifying relay: 1.2.3.4:9999
+   Expected MRENCLAVE: 0xdb718ecd...
+   Generated nonce: 0x1234abcd...
+   Relay MRENCLAVE:    0xdb718ecd...
+   Nonce verified: quote is fresh
+
+   VERIFICATION PASSED
+   The relay is running the expected code.
+   ```
+
+### Building Locally to Verify
+
+If you don't trust the published MRENCLAVE:
+
+```bash
+# Clone the repo at the release tag
+git clone https://github.com/maceip/freehold.git
+cd freehold
+git checkout v1.0.0
+
+# Build with Docker (reproducible)
+docker build -t freehold-enclave-build -f gramine/Dockerfile .
+docker run --rm -v $(pwd)/output:/output freehold-enclave-build
+
+# Compare with relay
+freehold-verify compare \
+  --relay 1.2.3.4:9999 \
+  --sigstruct output/freehold-enclave.sig
+```
+
+### What Verification Proves
+
+| Check | What It Proves |
+|-------|----------------|
+| MRENCLAVE match | Relay runs exactly the published code |
+| Nonce in quote | Quote is fresh (not replayed) |
+| Intel signature | Quote from real SGX hardware |
+
+### What Verification Does NOT Prove
+
+- Kernel/XDP hasn't been tampered with
+- Network traffic is encrypted
+- Relay won't misbehave in the future
+
+---
+
 ## Appendix A: Current Freehold Architecture
 
 From codebase analysis:

@@ -1,0 +1,217 @@
+name: Build Attestable Enclave
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish_mrenclave:
+        description: 'Publish MRENCLAVE to release'
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.75.0"
+  GRAMINE_VERSION: "v1.8"
+
+jobs:
+  build-enclave:
+    name: Build SGX Enclave
+    runs-on: ubuntu-latest
+    container:
+      image: gramineproject/gramine:v1.8
+
+    outputs:
+      mrenclave: ${{ steps.extract.outputs.mrenclave }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+            sh -s -- -y --default-toolchain ${{ env.RUST_VERSION }}
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-enclave-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-enclave-
+
+      - name: Build enclave binary
+        run: |
+          cargo build --release --locked -p freehold-enclave
+
+      - name: Generate SGX signing key
+        run: |
+          gramine-sgx-gen-private-key
+
+      - name: Generate Gramine manifest
+        run: |
+          cd gramine
+          gramine-manifest \
+            -Dlog_level=error \
+            -Darch_libdir=/lib/x86_64-linux-gnu \
+            freehold-enclave.manifest.template \
+            freehold-enclave.manifest
+
+      - name: Sign enclave
+        run: |
+          cd gramine
+          gramine-sgx-sign \
+            --manifest freehold-enclave.manifest \
+            --output freehold-enclave.manifest.sgx
+
+      - name: Extract MRENCLAVE
+        id: extract
+        run: |
+          cd gramine
+          gramine-sgx-sigstruct-view freehold-enclave.sig > sigstruct.txt
+          MRENCLAVE=$(grep mr_enclave sigstruct.txt | awk '{print $2}')
+          echo "mrenclave=$MRENCLAVE" >> $GITHUB_OUTPUT
+          echo "## MRENCLAVE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`$MRENCLAVE\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This is the measurement hash of the enclave code." >> $GITHUB_STEP_SUMMARY
+          echo "Users can verify relays are running this exact code." >> $GITHUB_STEP_SUMMARY
+
+      - name: Create attestation artifact
+        run: |
+          mkdir -p attestation
+          cat > attestation/mrenclave.txt << EOF
+          # Freehold MRENCLAVE
+          # Version: ${{ github.ref_name }}
+          # Commit: ${{ github.sha }}
+          # Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # Gramine: ${{ env.GRAMINE_VERSION }}
+          # Rust: ${{ env.RUST_VERSION }}
+          #
+          # To verify a relay:
+          #   freehold-verify verify --relay <ADDR>:9999 --mrenclave <HASH_BELOW>
+          #
+          ${{ steps.extract.outputs.mrenclave }}
+          EOF
+
+          # Also create machine-readable JSON
+          cat > attestation/mrenclave.json << EOF
+          {
+            "mrenclave": "${{ steps.extract.outputs.mrenclave }}",
+            "version": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "gramine_version": "${{ env.GRAMINE_VERSION }}",
+            "rust_version": "${{ env.RUST_VERSION }}"
+          }
+          EOF
+
+      - name: Upload attestation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestation-${{ github.sha }}
+          path: attestation/
+
+      - name: Upload enclave artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: enclave-${{ github.sha }}
+          path: |
+            gramine/freehold-enclave.manifest.sgx
+            gramine/freehold-enclave.sig
+            gramine/sigstruct.txt
+
+  # Verify build is reproducible by building again
+  verify-reproducible:
+    name: Verify Reproducible Build
+    runs-on: ubuntu-latest
+    needs: build-enclave
+    container:
+      image: gramineproject/gramine:v1.8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+            sh -s -- -y --default-toolchain ${{ env.RUST_VERSION }}
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Rebuild enclave
+        run: |
+          cargo build --release --locked -p freehold-enclave
+
+      - name: Generate SGX artifacts
+        run: |
+          gramine-sgx-gen-private-key
+          cd gramine
+          gramine-manifest \
+            -Dlog_level=error \
+            -Darch_libdir=/lib/x86_64-linux-gnu \
+            freehold-enclave.manifest.template \
+            freehold-enclave.manifest
+          gramine-sgx-sign \
+            --manifest freehold-enclave.manifest \
+            --output freehold-enclave.manifest.sgx
+
+      - name: Verify MRENCLAVE matches
+        run: |
+          cd gramine
+          REBUILD_MRENCLAVE=$(gramine-sgx-sigstruct-view freehold-enclave.sig | grep mr_enclave | awk '{print $2}')
+          EXPECTED_MRENCLAVE="${{ needs.build-enclave.outputs.mrenclave }}"
+
+          echo "Expected: $EXPECTED_MRENCLAVE"
+          echo "Rebuilt:  $REBUILD_MRENCLAVE"
+
+          if [ "$REBUILD_MRENCLAVE" = "$EXPECTED_MRENCLAVE" ]; then
+            echo "✅ REPRODUCIBLE BUILD VERIFIED"
+            echo "## Reproducibility Check" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Build is reproducible!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ MRENCLAVE MISMATCH - BUILD NOT REPRODUCIBLE"
+            echo "## Reproducibility Check" >> $GITHUB_STEP_SUMMARY
+            echo "❌ Build is NOT reproducible!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+  # Publish to release (only on release events)
+  publish:
+    name: Publish to Release
+    runs-on: ubuntu-latest
+    needs: [build-enclave, verify-reproducible]
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download attestation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: attestation-${{ github.sha }}
+          path: attestation
+
+      - name: Download enclave artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: enclave-${{ github.sha }}
+          path: enclave
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            attestation/mrenclave.txt
+            attestation/mrenclave.json
+            enclave/freehold-enclave.manifest.sgx
+            enclave/freehold-enclave.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

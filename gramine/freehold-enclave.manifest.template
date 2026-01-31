@@ -1,0 +1,60 @@
+# Gramine manifest for Freehold Enclave
+#
+# Run with: gramine-sgx freehold-enclave
+#
+# Build:
+#   gramine-manifest -Dlog_level=error -Darch_libdir=/lib/x86_64-linux-gnu \
+#     freehold-enclave.manifest.template freehold-enclave.manifest
+#   gramine-sgx-sign --manifest freehold-enclave.manifest --output freehold-enclave.manifest.sgx
+
+loader.entrypoint = "file:{{ gramine.libos }}"
+libos.entrypoint = "/freehold-enclave"
+
+loader.log_level = "{{ log_level }}"
+
+loader.env.LD_LIBRARY_PATH = "/lib:{{ arch_libdir }}"
+loader.env.RUST_BACKTRACE = "1"
+
+# Enclave configuration
+loader.insecure__use_cmdline_argv = true
+
+# File system mounts
+fs.mounts = [
+    { path = "/lib", uri = "file:{{ gramine.runtimedir() }}" },
+    { path = "{{ arch_libdir }}", uri = "file:{{ arch_libdir }}" },
+    { path = "/freehold-enclave", uri = "file:target/release/freehold-enclave" },
+    { path = "/tmp", uri = "file:/tmp", type = "tmpfs" },
+]
+
+# SGX-specific settings
+sgx.debug = false
+sgx.edmm_enable = {{ 'true' if env.get('EDMM', '0') == '1' else 'false' }}
+
+# Enclave memory size (adjust based on workload)
+sgx.enclave_size = "256M"
+
+# Number of threads
+sgx.max_threads = 4
+
+# Trusted files (measured into MRENCLAVE)
+sgx.trusted_files = [
+    "file:{{ gramine.libos }}",
+    "file:{{ gramine.runtimedir() }}/",
+    "file:{{ arch_libdir }}/",
+    "file:target/release/freehold-enclave",
+]
+
+# Allowed files (not measured, use with caution)
+sgx.allowed_files = [
+    "file:/tmp/",
+]
+
+# Enable remote attestation
+sgx.remote_attestation = "dcap"
+
+# ISV configuration
+sgx.isvprodid = 1
+sgx.isvsvn = 1
+
+# CPU features
+sys.enable_sigterm_injection = true

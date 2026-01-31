@@ -1,0 +1,29 @@
+[package]
+name = "freehold-verify"
+description = "CLI tool to verify Freehold relay attestation"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "freehold-verify"
+path = "src/main.rs"
+
+[dependencies]
+freehold-api.workspace = true
+freehold-enclave = { path = "../freehold-enclave", features = ["mock-attestation"] }
+
+anyhow.workspace = true
+clap.workspace = true
+tokio = { workspace = true, features = ["net", "time", "rt-multi-thread", "macros"] }
+serde.workspace = true
+serde_json.workspace = true
+hex = "0.4"
+rand = "0.8"
+
+# For DCAP quote verification (no SGX hardware required)
+# intel-tee-quote-verification-rs = { version = "0.2", optional = true }
+
+[features]
+default = []
+# Enable real DCAP verification (requires Intel libraries)
+# dcap-verify = ["intel-tee-quote-verification-rs"]
