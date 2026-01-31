@@ -82,11 +82,33 @@ jobs:
           echo "=== Built libraries ==="
           find jniLibs -name "*.so" -exec ls -lh {} \;
 
+      - name: Generate Kotlin bindings
+        run: |
+          # Install uniffi-bindgen-cli
+          cargo install uniffi-bindgen-cli --version 0.29.0
+
+          # Generate Kotlin bindings from the UDL file
+          mkdir -p kotlin-bindings
+          uniffi-bindgen generate \
+            --library target/aarch64-linux-android/release/libfreehold_android.so \
+            --language kotlin \
+            --out-dir kotlin-bindings
+
+          echo "=== Generated Kotlin bindings ==="
+          find kotlin-bindings -type f -name "*.kt"
+
       - name: Upload native libraries
         uses: actions/upload-artifact@v4
         with:
           name: android-native-libs
           path: jniLibs/
+          retention-days: 1
+
+      - name: Upload Kotlin bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-kotlin-bindings
+          path: kotlin-bindings/
           retention-days: 1
 
   build-apk:
@@ -102,6 +124,12 @@ jobs:
         with:
           name: android-native-libs
           path: platforms/android/app/src/main/jniLibs/
+
+      - name: Download Kotlin bindings
+        uses: actions/download-artifact@v4
+        with:
+          name: android-kotlin-bindings
+          path: platforms/android/app/src/main/kotlin/
 
       - name: Set up JDK
         uses: actions/setup-java@v4
