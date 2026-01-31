@@ -329,16 +329,110 @@ impl Server {
 | Malicious cloud | Reading HMAC secret | Replacing XDP |
 | Intel | Nothing (they're the root of trust) | N/A |
 
+## Testing Without SGX Hardware
+
+Since most developers don't have access to SGX hardware, we provide multiple testing strategies:
+
+### 1. Mock Attestation Mode
+
+Compile with `--features mock-attestation` to use simulated quotes:
+
+```bash
+cargo test -p freehold-enclave --features mock-attestation
+cargo test -p freehold-verify
+```
+
+This mode:
+- Generates structurally valid quotes (JSON format)
+- Allows setting arbitrary MRENCLAVE values
+- Tests all verification logic except Intel signature validation
+
+### 2. Integration Tests
+
+Tests in `crates/freehold-enclave/tests/attestation_flow.rs`:
+
+| Test | What It Verifies |
+|------|------------------|
+| `test_verification_flow_simulation` | Complete request→response→verify flow |
+| `test_replay_attack_detected` | Nonce mismatch detection |
+| `test_tampered_mrenclave_detected` | MRENCLAVE mismatch detection |
+| `test_different_nonces_produce_different_quotes` | Quote freshness |
+| `test_cookie_operations_in_enclave` | HMAC cookie security |
+
+Tests in `crates/freehold-verify/tests/integration.rs`:
+
+| Test | What It Verifies |
+|------|------------------|
+| `test_verify_against_mock_server` | Full UDP client/server flow |
+| `test_detect_wrong_mrenclave` | Wrong MRENCLAVE rejection |
+| `test_multiple_concurrent_verifications` | Concurrent verification handling |
+
+### 3. Gramine Direct Mode (Without SGX)
+
+For testing the full enclave binary without SGX hardware:
+
+```bash
+# Build enclave binary
+cargo build --release -p freehold-enclave
+
+# Run with Gramine in direct mode (no SGX)
+gramine-direct ./target/release/freehold-enclave
+```
+
+This runs the enclave code natively, without encryption or attestation.
+
+### 4. CI with Confidential VMs (Optional)
+
+For testing with real SGX hardware in CI:
+
+```yaml
+# Example: Azure DCsv3 confidential VMs
+jobs:
+  test-sgx:
+    runs-on: [self-hosted, sgx]
+    steps:
+      - run: cargo test -p freehold-enclave --features sgx
+```
+
+Cloud options with SGX support:
+- Azure DCsv2/DCsv3 VMs
+- IBM Cloud Bare Metal with SGX
+- Alibaba Cloud SGX instances
+
+### 5. What Each Mode Tests
+
+| Aspect | Mock Mode | Gramine Direct | Real SGX |
+|--------|-----------|----------------|----------|
+| Quote structure | ✅ JSON mock | ❌ N/A | ✅ Real DCAP |
+| MRENCLAVE extraction | ✅ | ❌ | ✅ |
+| Nonce verification | ✅ | ❌ | ✅ |
+| Intel signature | ❌ | ❌ | ✅ |
+| Memory encryption | ❌ | ❌ | ✅ |
+| Cookie operations | ✅ | ✅ | ✅ |
+
+### Running All Tests
+
+```bash
+# Quick: mock tests only
+cargo test -p freehold-enclave --features mock-attestation
+cargo test -p freehold-verify
+
+# Full: all workspace tests
+cargo test --workspace --features mock-attestation
+```
+
 ## Implementation Checklist
 
-- [ ] `freehold-enclave` crate with Gramine manifest
-- [ ] ECALL interface for cookie operations
-- [ ] Quote generation with nonce
-- [ ] Protocol messages (0x10, 0x11)
-- [ ] Server attestation handler
-- [ ] Collateral caching
-- [ ] `freehold-verify` CLI tool
-- [ ] Reproducible Dockerfile
-- [ ] GitHub Actions workflow
-- [ ] DNS TXT record setup
-- [ ] Documentation updates
+- [x] `freehold-enclave` crate with Gramine manifest
+- [x] ECALL interface for cookie operations
+- [x] Quote generation with nonce
+- [x] Protocol messages (0x10, 0x11)
+- [x] Server attestation handler
+- [ ] Collateral caching (production)
+- [x] `freehold-verify` CLI tool
+- [x] Reproducible Dockerfile
+- [x] GitHub Actions workflow
+- [ ] DNS TXT record setup (deployment)
+- [x] Documentation updates
+- [x] Mock attestation tests
+- [x] Integration tests

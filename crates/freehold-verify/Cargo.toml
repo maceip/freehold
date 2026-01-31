@@ -27,3 +27,6 @@ rand = "0.8"
 default = []
 # Enable real DCAP verification (requires Intel libraries)
 # dcap-verify = ["intel-tee-quote-verification-rs"]
+
+[dev-dependencies]
+rand = "0.8"
