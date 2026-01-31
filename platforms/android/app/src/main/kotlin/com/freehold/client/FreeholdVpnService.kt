@@ -151,7 +151,7 @@ class FreeholdVpnService : VpnService() {
             updateNotification("Connected to port $relayPort")
 
             // Notify app of connection
-            FreeholdApp.instance?.onVpnConnected()
+            FreeholdApplication.instance?.onVpnConnected()
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN", e)
@@ -184,7 +184,7 @@ class FreeholdVpnService : VpnService() {
         vpnInterface = null
 
         // Notify app
-        FreeholdApp.instance?.onVpnDisconnected()
+        FreeholdApplication.instance?.onVpnDisconnected()
 
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -238,12 +238,12 @@ class FreeholdVpnService : VpnService() {
                         ConnectionState.DISCONNECTED -> updateNotification("Disconnected")
                         ConnectionState.ERROR -> updateNotification("Error: $message")
                     }
-                    FreeholdApp.instance?.onStateChanged(state, message)
+                    FreeholdApplication.instance?.onStateChanged(state, message)
                 }
 
                 override fun onPortAssigned(port: UShort) {
                     Log.i(TAG, "Port assigned: $port")
-                    FreeholdApp.instance?.onPortAssigned(port.toInt())
+                    FreeholdApplication.instance?.onPortAssigned(port.toInt())
                 }
 
                 override fun onNeighborDiscovered(ip: String) {
@@ -252,11 +252,11 @@ class FreeholdVpnService : VpnService() {
 
                 override fun onError(error: String) {
                     Log.e(TAG, "Tunnel error: $error")
-                    FreeholdApp.instance?.onError(error)
+                    FreeholdApplication.instance?.onError(error)
                 }
 
                 override fun onBytesTransferred(rx: ULong, tx: ULong) {
-                    FreeholdApp.instance?.onBytesTransferred(rx.toLong(), tx.toLong())
+                    FreeholdApplication.instance?.onBytesTransferred(rx.toLong(), tx.toLong())
                 }
             }
 
