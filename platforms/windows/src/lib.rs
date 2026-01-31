@@ -56,7 +56,7 @@ mod windows_impl {
 
         // Create bitmap
         let bitmap = CreateCompatibleBitmap(screen_dc, size, size);
-        let old_bitmap = SelectObject(mem_dc, bitmap);
+        let old_bitmap = SelectObject(mem_dc, bitmap.into());
 
         // Fill with transparent color (magenta = transparent in icons)
         let brush = CreateSolidBrush(COLORREF(0x00FF00FF)); // Magenta
@@ -67,43 +67,43 @@ mod windows_impl {
             bottom: size,
         };
         FillRect(mem_dc, &rect, brush);
-        let _ = DeleteObject(brush);
+        let _ = DeleteObject(brush.into());
 
         // Draw filled circle
         let brush = CreateSolidBrush(color);
         let pen = CreatePen(PS_SOLID, 1, color);
-        let old_brush = SelectObject(mem_dc, brush);
-        let old_pen = SelectObject(mem_dc, pen);
+        let old_brush = SelectObject(mem_dc, brush.into());
+        let old_pen = SelectObject(mem_dc, pen.into());
 
         Ellipse(mem_dc, 1, 1, size - 1, size - 1);
 
         SelectObject(mem_dc, old_brush);
         SelectObject(mem_dc, old_pen);
-        let _ = DeleteObject(brush);
-        let _ = DeleteObject(pen);
+        let _ = DeleteObject(brush.into());
+        let _ = DeleteObject(pen.into());
 
         // Create mask bitmap (1-bit)
         let mask_bitmap = CreateBitmap(size, size, 1, 1, None);
         let mask_dc = CreateCompatibleDC(Some(screen_dc));
-        let old_mask = SelectObject(mask_dc, mask_bitmap);
+        let old_mask = SelectObject(mask_dc, mask_bitmap.into());
 
         // Fill mask with white (transparent)
         let white_brush = CreateSolidBrush(COLORREF(0x00FFFFFF));
         FillRect(mask_dc, &rect, white_brush);
-        let _ = DeleteObject(white_brush);
+        let _ = DeleteObject(white_brush.into());
 
         // Draw black circle on mask (opaque area)
         let black_brush = CreateSolidBrush(COLORREF(0x00000000));
         let black_pen = CreatePen(PS_SOLID, 1, COLORREF(0x00000000));
-        let old_mask_brush = SelectObject(mask_dc, black_brush);
-        let old_mask_pen = SelectObject(mask_dc, black_pen);
+        let old_mask_brush = SelectObject(mask_dc, black_brush.into());
+        let old_mask_pen = SelectObject(mask_dc, black_pen.into());
 
         Ellipse(mask_dc, 1, 1, size - 1, size - 1);
 
         SelectObject(mask_dc, old_mask_brush);
         SelectObject(mask_dc, old_mask_pen);
-        let _ = DeleteObject(black_brush);
-        let _ = DeleteObject(black_pen);
+        let _ = DeleteObject(black_brush.into());
+        let _ = DeleteObject(black_pen.into());
 
         SelectObject(mem_dc, old_bitmap);
         SelectObject(mask_dc, old_mask);
@@ -120,8 +120,8 @@ mod windows_impl {
         let icon = CreateIconIndirect(&icon_info)?;
 
         // Cleanup
-        let _ = DeleteObject(bitmap);
-        let _ = DeleteObject(mask_bitmap);
+        let _ = DeleteObject(bitmap.into());
+        let _ = DeleteObject(mask_bitmap.into());
         DeleteDC(mem_dc);
         DeleteDC(mask_dc);
         ReleaseDC(None, screen_dc);
