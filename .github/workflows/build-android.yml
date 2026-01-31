@@ -84,12 +84,10 @@ jobs:
 
       - name: Generate Kotlin bindings
         run: |
-          # Install uniffi CLI (provides uniffi-bindgen binary)
-          cargo install uniffi@0.29.0
-
-          # Generate Kotlin bindings from the library
+          # Build and run uniffi-bindgen from the crate
           mkdir -p kotlin-bindings
-          uniffi-bindgen generate \
+          cargo run --features bindgen -p freehold-android-bridge --bin uniffi-bindgen -- \
+            generate \
             --library target/aarch64-linux-android/release/libfreehold_android.so \
             --language kotlin \
             --out-dir kotlin-bindings
