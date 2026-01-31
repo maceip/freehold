@@ -32,7 +32,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-lint-v2-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-lint-v3-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-lint-v2-
 
