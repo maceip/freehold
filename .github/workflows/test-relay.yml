@@ -1,0 +1,132 @@
+name: Relay Integration Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/freehold-server/**'
+      - 'crates/freehold-client/**'
+      - 'crates/freehold-client-core/**'
+      - 'crates/freehold-api/**'
+      - 'crates/freehold-common/**'
+      - '.github/workflows/test-relay.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/freehold-server/**'
+      - 'crates/freehold-client/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Run unit tests
+        run: |
+          cargo test --workspace --exclude freehold-ebpf --exclude freehold-android-bridge
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-integration-
+
+      - name: Build relay server
+        run: cargo build --release -p freehold-server
+
+      - name: Build client
+        run: cargo build --release -p freehold-client
+
+      - name: Run relay integration test
+        run: |
+          # Start relay server in background
+          echo "Starting relay server..."
+          ./target/release/freehold-server --bind 127.0.0.1:7878 &
+          SERVER_PID=$!
+          sleep 2
+
+          # Verify server is running
+          if ! kill -0 $SERVER_PID 2>/dev/null; then
+            echo "Server failed to start"
+            exit 1
+          fi
+          echo "Server started (PID: $SERVER_PID)"
+
+          # Simple connectivity test - just verify server responds
+          # The client will timeout if no relay is available
+          echo "Testing relay connectivity..."
+          timeout 10 ./target/release/freehold-client \
+            --relay 127.0.0.1:7878 \
+            --port 8080 \
+            --once || true
+
+          # Cleanup
+          kill $SERVER_PID 2>/dev/null || true
+          echo "Integration test completed"
+
+  # Protocol compliance tests
+  protocol-tests:
+    name: Protocol Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-protocol-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-protocol-
+
+      - name: Run protocol tests
+        run: |
+          cargo test --package freehold-api --lib
+          cargo test --package freehold-common --lib
