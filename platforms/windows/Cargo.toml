@@ -3,9 +3,6 @@ name = "freehold-platform-windows"
 version = "0.1.0"
 edition = "2021"
 
-# Exclude from parent workspace when building standalone
-[workspace]
-
 [[bin]]
 name = "freehold-windows"
 path = "src/main.rs"
