@@ -3,6 +3,7 @@ name = "freehold-common"
 description = "Shared memory structures between server and eBPF kernel"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [features]
 default = ["userspace"]

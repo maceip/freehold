@@ -317,7 +317,7 @@ mod proptests {
             prop_assert_eq!(tracker.get_owner(port), Some(ip2));
             // If IPs are different, ip1 should lose the port
             if ip1 != ip2 {
-                prop_assert!(!tracker.get_ports(&ip1).map_or(false, |p| p.contains(&port)));
+                prop_assert!(!tracker.get_ports(&ip1).is_some_and(|p| p.contains(&port)));
             }
         }
 

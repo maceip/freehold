@@ -29,6 +29,9 @@ pub mod timing {
 
     /// Timeout waiting for challenge response
     pub const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Minimum interval between REGISTER retries when disconnected
+    pub const REGISTER_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 }
 
 /// Protocol quota limits
@@ -79,7 +82,7 @@ pub enum ProtocolError {
 }
 
 /// Parsed protocol message
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// Client -> Server: Request to register a port
     Register { port: u16 },

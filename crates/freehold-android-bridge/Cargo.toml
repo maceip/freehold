@@ -1,8 +1,10 @@
 [package]
 name = "freehold-android-bridge"
+description = "Android FFI bindings for Freehold client (UniFFI/Kotlin)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [lib]
 crate-type = ["cdylib"]

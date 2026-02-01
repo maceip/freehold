@@ -1,0 +1,24 @@
+[package]
+name = "freehold-e2e-tests"
+description = "End-to-end tests for Freehold (requires Linux with eBPF support)"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+freehold-api.workspace = true
+freehold-client-core = { path = "../freehold-client-core", default-features = false }
+freehold-server = { path = "../freehold-server" }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+libc = "0.2"
+
+[features]
+# E2E tests that require root and eBPF
+e2e = []

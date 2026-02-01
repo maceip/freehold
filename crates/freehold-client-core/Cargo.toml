@@ -1,12 +1,17 @@
 [package]
 name = "freehold-client-core"
-description = "Freehold client engine - headless registration logic"
+description = "Headless client engine for the Freehold anycast relay network"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["networking", "nat", "quic", "anycast"]
+categories = ["network-programming"]
 
 [dependencies]
 freehold-api.workspace = true
-freehold-h3-proxy = { path = "../freehold-h3-proxy", optional = true }
+freehold-h3-proxy = { path = "../freehold-h3-proxy", version = "1.0.0", optional = true }
 
 tokio.workspace = true
 anyhow.workspace = true
@@ -16,3 +21,6 @@ rand = "0.9"
 [features]
 default = ["h3-proxy"]
 h3-proxy = ["freehold-h3-proxy"]
+
+[dev-dependencies]
+proptest = "1.5"

@@ -777,6 +777,7 @@ dependencies = [
  "anyhow",
  "freehold-api",
  "freehold-h3-proxy",
+ "proptest",
  "rand",
  "tokio",
  "tracing",
@@ -787,6 +788,21 @@ name = "freehold-common"
 version = "1.0.0"
 dependencies = [
  "aya",
+]
+
+[[package]]
+name = "freehold-e2e-tests"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "freehold-api",
+ "freehold-client-core",
+ "freehold-server",
+ "libc",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -862,6 +878,7 @@ dependencies = [
  "bytes",
  "clap",
  "freehold-api",
+ "freehold-client-core",
  "freehold-common",
  "hex",
  "hmac",

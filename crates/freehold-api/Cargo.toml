@@ -1,8 +1,13 @@
 [package]
 name = "freehold-api"
-description = "Network protocol contract between client and server"
+description = "Wire protocol for the Freehold anycast relay network"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["networking", "protocol", "udp", "anycast"]
+categories = ["network-programming"]
 
 [dependencies]
 byteorder.workspace = true

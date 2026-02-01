@@ -7,7 +7,7 @@ use aya::util::online_cpus;
 use aya::Ebpf;
 use bytes::BytesMut;
 use clap::{Parser, Subcommand};
-use freehold_api::{timing, Message, COOKIE_SIZE};
+use freehold_api::{timing, Message};
 use freehold_common::{maps, EventType, Registration, XdpEvent, XDP_PROGRAM};
 use freehold_server::config::Config;
 use freehold_server::cookie::CookieAuth;

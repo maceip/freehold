@@ -3,6 +3,7 @@ name = "freehold-server"
 description = "Freehold relay server daemon"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [lib]
 name = "freehold_server"
@@ -35,3 +36,4 @@ ipnet = { version = "2.10", features = ["serde"] }
 
 [dev-dependencies]
 proptest = "1.4"
+freehold-client-core = { path = "../freehold-client-core", default-features = false }

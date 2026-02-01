@@ -12,6 +12,8 @@
 //!                                     Engine (registration)
 //! ```
 
+pub mod state;
+
 use anyhow::Result;
 use freehold_api::{timing, Message, COOKIE_SIZE};
 use std::collections::HashSet;

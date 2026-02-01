@@ -4,6 +4,7 @@ description = "Freehold XDP program - kernel-space packet forwarding"
 version.workspace = true
 edition.workspace = true
 build = "build.rs"
+publish = false
 
 [dependencies]
 freehold-common = { path = "../freehold-common", default-features = false }

@@ -3,6 +3,8 @@ name = "freehold-client"
 description = "Freehold client - desktop tray application"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "freehold"

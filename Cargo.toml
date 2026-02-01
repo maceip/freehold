@@ -9,6 +9,7 @@ members = [
     "crates/freehold-client",
     "crates/freehold-h3-proxy",
     "crates/freehold-android-bridge",
+    "crates/freehold-e2e-tests",
     # Platform-specific (only built in CI for their target platforms)
     "platforms/windows",
 ]
@@ -29,10 +30,10 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/maceip/freehold"
 
 [workspace.dependencies]
-# Internal crates
-freehold-common = { path = "crates/freehold-common" }
-freehold-api = { path = "crates/freehold-api" }
-freehold-client-core = { path = "crates/freehold-client-core" }
+# Internal crates (version required for crates.io publishing)
+freehold-common = { path = "crates/freehold-common", version = "1.0.0" }
+freehold-api = { path = "crates/freehold-api", version = "1.0.0" }
+freehold-client-core = { path = "crates/freehold-client-core", version = "1.0.0" }
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }

@@ -1,8 +1,13 @@
 [package]
 name = "freehold-h3-proxy"
-description = "H3/QUIC to HTTP/1.1 reverse proxy for Freehold"
+description = "HTTP/3 (QUIC) to HTTP/1.1 reverse proxy"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["http3", "quic", "proxy", "h3"]
+categories = ["network-programming", "web-programming"]
 
 [dependencies]
 tokio.workspace = true
