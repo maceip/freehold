@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Shared cache key prefix for all jobs - increment to invalidate caches
+  CACHE_VERSION: v1
 
 jobs:
   # ============================================
@@ -21,7 +23,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      # Required packages - must succeed (#8)
+      - name: Install required system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -29,25 +32,33 @@ jobs:
             pkg-config \
             libssl-dev \
             clang \
-            llvm \
+            llvm
+
+      # Optional GUI dependencies - can fail (#8)
+      - name: Install optional GUI dependencies
+        run: |
+          sudo apt-get install -y \
             libglib2.0-dev \
             libgtk-4-dev \
-            libadwaita-1-dev || true
+            libadwaita-1-dev || echo "Optional GUI dependencies not available (non-fatal)"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
+      # Improved cache key strategy (#11)
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-lint-v3-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-lint-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-lint-v2-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-lint-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-cargo-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -175,6 +186,7 @@ jobs:
       - name: Install cargo-outdated
         run: cargo install cargo-outdated --locked
 
+      # Improved cache key strategy (#11)
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -182,9 +194,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-deps-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-deps-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-deps-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-cargo-
 
       - name: Check for outdated dependencies
         id: check-upgrades
@@ -232,7 +246,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      # Required packages - must succeed (#8)
+      - name: Install required system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -240,13 +255,19 @@ jobs:
             pkg-config \
             libssl-dev \
             clang \
-            llvm \
+            llvm
+
+      # Optional GUI dependencies - can fail (#8)
+      - name: Install optional GUI dependencies
+        run: |
+          sudo apt-get install -y \
             libgtk-4-dev \
-            libadwaita-1-dev || true
+            libadwaita-1-dev || echo "Optional GUI dependencies not available (non-fatal)"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Improved cache key strategy (#11)
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -254,9 +275,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-build-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-build-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-cargo-
 
       - name: Build workspace
         id: build
@@ -287,7 +310,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      # Required packages - must succeed (#8)
+      - name: Install required system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -295,10 +319,15 @@ jobs:
             pkg-config \
             libssl-dev \
             clang \
-            llvm \
+            llvm
+
+      # Optional GUI dependencies - can fail (#8)
+      - name: Install optional GUI dependencies
+        run: |
+          sudo apt-get install -y \
             libglib2.0-dev \
             libgtk-4-dev \
-            libadwaita-1-dev || true
+            libadwaita-1-dev || echo "Optional GUI dependencies not available (non-fatal)"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -308,6 +337,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # Improved cache key strategy (#11)
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -315,9 +345,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-coverage-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-coverage-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-coverage-
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-cargo-
 
       - name: Generate coverage report
         run: |
