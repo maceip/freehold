@@ -586,7 +586,10 @@ mod tests {
         };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        if let Message::Neighbors { addrs: parsed_addrs } = parsed {
+        if let Message::Neighbors {
+            addrs: parsed_addrs,
+        } = parsed
+        {
             assert_eq!(parsed_addrs, addrs);
         } else {
             panic!("Expected Neighbors message");

@@ -48,8 +48,19 @@ impl CookieAuth {
     }
 
     /// Verify a cookie using current and previous time bucket
-    pub fn verify_with_grace(&self, ip: Ipv4Addr, port: u16, cookie: &[u8; COOKIE_SIZE], current_bucket: u64) -> bool {
-        self.verify(ip, port, cookie, &[current_bucket, current_bucket.saturating_sub(1)])
+    pub fn verify_with_grace(
+        &self,
+        ip: Ipv4Addr,
+        port: u16,
+        cookie: &[u8; COOKIE_SIZE],
+        current_bucket: u64,
+    ) -> bool {
+        self.verify(
+            ip,
+            port,
+            cookie,
+            &[current_bucket, current_bucket.saturating_sub(1)],
+        )
     }
 }
 

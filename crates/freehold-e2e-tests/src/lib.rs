@@ -111,7 +111,11 @@ impl TestServer {
             }
 
             Message::Heartbeat { port } => {
-                if self.registered_ports.iter().any(|(p, i)| *p == *port && *i == ip) {
+                if self
+                    .registered_ports
+                    .iter()
+                    .any(|(p, i)| *p == *port && *i == ip)
+                {
                     Some(Message::Neighbors {
                         addrs: self.neighbors.clone(),
                     })
@@ -262,7 +266,11 @@ mod tests {
         }
 
         assert!(client.is_connected(), "Client should be connected");
-        assert_eq!(server.registered_count(), 1, "Server should have 1 registration");
+        assert_eq!(
+            server.registered_count(),
+            1,
+            "Server should have 1 registration"
+        );
     }
 
     #[test]
@@ -311,10 +319,7 @@ mod tests {
         let server_addr = server.local_addr();
 
         // Set up neighbors
-        server.set_neighbors(vec![
-            Ipv4Addr::new(10, 0, 0, 1),
-            Ipv4Addr::new(10, 0, 0, 2),
-        ]);
+        server.set_neighbors(vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]);
 
         // Create client with auto-discovery enabled
         let mut client = TestClient::new(server_addr, 8080, true).unwrap();
@@ -360,12 +365,14 @@ mod tests {
         // Simulate time passing by manipulating last_activity
         // (In real tests, we'd wait for HEARTBEAT_INTERVAL)
         client.state_machine.relays[0].last_activity =
-            Instant::now() - timing::HEARTBEAT_INTERVAL - Duration::from_secs(1);
+            Some(Instant::now() - timing::HEARTBEAT_INTERVAL - Duration::from_secs(1));
 
         // Tick should send heartbeat
         let actions = client.tick().unwrap();
         assert!(
-            actions.iter().any(|a| matches!(a, Action::SendHeartbeat { .. })),
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::SendHeartbeat { .. })),
             "Should have sent heartbeat"
         );
 
@@ -381,11 +388,13 @@ mod tests {
 
         // First tick sends register
         let actions = client.tick().unwrap();
-        assert!(actions.iter().any(|a| matches!(a, Action::SendRegister { .. })));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, Action::SendRegister { .. })));
 
         // Simulate timeout by manipulating last_activity
         client.state_machine.relays[0].last_activity =
-            Instant::now() - freehold_api::timing::REGISTER_TIMEOUT - Duration::from_secs(1);
+            Some(Instant::now() - freehold_api::timing::REGISTER_TIMEOUT - Duration::from_secs(1));
         client.state_machine.relays[0].state = RelayState::Pending;
 
         // Tick should detect timeout and transition to Disconnected
@@ -400,7 +409,9 @@ mod tests {
 
         // Next tick should retry
         let actions = client.tick().unwrap();
-        assert!(actions.iter().any(|a| matches!(a, Action::SendRegister { .. })));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, Action::SendRegister { .. })));
     }
 }
 
@@ -421,6 +432,8 @@ mod e2e_tests {
 
         // This test would set up network namespaces and test with real eBPF
         // For now, placeholder - see tests/e2e/run_e2e.sh for full implementation
-        eprintln!("E2E infrastructure available - run tests/e2e/run_e2e.sh with sudo for full test");
+        eprintln!(
+            "E2E infrastructure available - run tests/e2e/run_e2e.sh with sudo for full test"
+        );
     }
 }

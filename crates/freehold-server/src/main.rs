@@ -113,7 +113,10 @@ impl Server {
 
             Message::Confirm { port, cookie } => {
                 let current_bucket = time_bucket();
-                if !self.cookie_auth.verify_with_grace(ip, port, &cookie, current_bucket) {
+                if !self
+                    .cookie_auth
+                    .verify_with_grace(ip, port, &cookie, current_bucket)
+                {
                     warn!("Invalid cookie from {} for port {}", ip, port);
                     socket.send_to(&Message::Error { port }.to_bytes(), from)?;
                     return Ok(());

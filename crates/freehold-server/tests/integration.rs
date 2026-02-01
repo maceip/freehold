@@ -2,77 +2,81 @@
 //!
 //! These tests verify the server's message handling logic without eBPF.
 //! They test the full registration protocol flow using UDP sockets.
+//!
+//! Uses the `MessageHandler` trait to avoid duplicating protocol logic.
 
 use freehold_api::{Message, COOKIE_SIZE};
 use freehold_server::cookie::CookieAuth;
-use freehold_server::quota::QuotaTracker;
+use freehold_server::handler::{HandlerContext, MessageHandler};
+use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 
-/// Test helper to create a mock server state handler
+/// Timeout for socket operations in tests.
+/// 5 seconds is long enough to handle slow CI environments
+/// but short enough to fail quickly on actual hangs.
+const TEST_SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Test helper implementing MessageHandler trait.
+///
+/// Uses fixed time bucket for deterministic testing and in-memory
+/// storage for registrations.
 struct MockServer {
-    cookie_auth: CookieAuth,
-    quotas: QuotaTracker,
-    max_ports_per_ip: u32,
-    neighbors: Vec<Ipv4Addr>,
-    // Track registered ports for verification
-    registered_ports: Vec<u16>,
+    context: HandlerContext,
+    /// Track registered (IP, port) pairs - proper data structure (#14 fix)
+    registered: HashSet<(Ipv4Addr, u16)>,
+    /// Fixed time bucket for deterministic tests (#13 fix)
+    fixed_bucket: u64,
 }
 
 impl MockServer {
     fn new(secret: [u8; 32]) -> Self {
         Self {
-            cookie_auth: CookieAuth::new(secret),
-            quotas: QuotaTracker::default(),
-            max_ports_per_ip: 8,
-            neighbors: vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)],
-            registered_ports: Vec::new(),
+            context: HandlerContext::new(
+                secret,
+                8,
+                vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)],
+            ),
+            registered: HashSet::new(),
+            fixed_bucket: 0,
         }
     }
 
-    /// Process a message and return the response
+    /// Advance to next time bucket (for testing cookie expiration)
+    #[allow(dead_code)]
+    fn advance_bucket(&mut self) {
+        self.fixed_bucket += 1;
+    }
+
+    /// Convenience wrapper to get Option<Message>
     fn handle(&mut self, msg: Message, from_ip: Ipv4Addr) -> Option<Message> {
-        // Use bucket 0 for tests (deterministic)
-        let bucket = 0u64;
+        MessageHandler::handle(self, msg, from_ip).into_option()
+    }
+}
 
-        match msg {
-            Message::Register { port } => {
-                let count = self.quotas.count(&from_ip);
-                if count >= self.max_ports_per_ip {
-                    return Some(Message::Error { port });
-                }
+impl MessageHandler for MockServer {
+    fn context(&self) -> &HandlerContext {
+        &self.context
+    }
 
-                let cookie = self.cookie_auth.generate(from_ip, port, bucket);
-                Some(Message::Challenge { port, cookie })
-            }
+    fn context_mut(&mut self) -> &mut HandlerContext {
+        &mut self.context
+    }
 
-            Message::Confirm { port, cookie } => {
-                // Verify with buckets 0 and 1 (current and previous)
-                if !self.cookie_auth.verify(from_ip, port, &cookie, &[0, 1]) {
-                    return Some(Message::Error { port });
-                }
+    fn time_bucket(&self) -> u64 {
+        self.fixed_bucket
+    }
 
-                self.quotas.register(from_ip, port);
-                self.registered_ports.push(port);
+    fn valid_buckets(&self) -> Vec<u64> {
+        vec![self.fixed_bucket, self.fixed_bucket.saturating_sub(1)]
+    }
 
-                Some(Message::Neighbors {
-                    addrs: self.neighbors.clone(),
-                })
-            }
+    fn is_registered(&self, ip: Ipv4Addr, port: u16) -> bool {
+        self.registered.contains(&(ip, port))
+    }
 
-            Message::Heartbeat { port } => {
-                // Only respond if registered
-                if self.registered_ports.contains(&port) {
-                    Some(Message::Neighbors {
-                        addrs: self.neighbors.clone(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            _ => None,
-        }
+    fn register(&mut self, ip: Ipv4Addr, port: u16) {
+        self.registered.insert((ip, port));
     }
 }
 
@@ -85,7 +89,9 @@ fn full_registration_flow() {
 
     // Step 1: Client sends REGISTER
     let register = Message::Register { port };
-    let response = server.handle(register, client_ip).expect("should get challenge");
+    let response = server
+        .handle(register, client_ip)
+        .expect("should get challenge");
 
     // Step 2: Server responds with CHALLENGE
     let cookie = match response {
@@ -98,7 +104,9 @@ fn full_registration_flow() {
 
     // Step 3: Client sends CONFIRM with cookie
     let confirm = Message::Confirm { port, cookie };
-    let response = server.handle(confirm, client_ip).expect("should get neighbors");
+    let response = server
+        .handle(confirm, client_ip)
+        .expect("should get neighbors");
 
     // Step 4: Server responds with NEIGHBORS
     match response {
@@ -111,7 +119,7 @@ fn full_registration_flow() {
     }
 
     // Verify registration was recorded
-    assert!(server.registered_ports.contains(&port));
+    assert!(server.is_registered(client_ip, port));
 }
 
 #[test]
@@ -137,20 +145,22 @@ fn invalid_cookie_rejected() {
     }
 
     // Verify not registered
-    assert!(!server.registered_ports.contains(&port));
+    assert!(!server.is_registered(client_ip, port));
 }
 
 #[test]
 fn quota_exceeded() {
     let secret = [0xAB; 32];
     let mut server = MockServer::new(secret);
-    server.max_ports_per_ip = 2; // Low quota for testing
+    server.context.max_ports_per_ip = 2; // Low quota for testing
     let client_ip = Ipv4Addr::new(192, 168, 1, 100);
 
     // Register two ports (should succeed)
     for port in [8080, 8081] {
         let register = Message::Register { port };
-        let response = server.handle(register, client_ip).expect("should get challenge");
+        let response = server
+            .handle(register, client_ip)
+            .expect("should get challenge");
 
         let cookie = match response {
             Message::Challenge { cookie, .. } => cookie,
@@ -164,7 +174,9 @@ fn quota_exceeded() {
 
     // Third registration should fail
     let register = Message::Register { port: 8082 };
-    let response = server.handle(register, client_ip).expect("should get error");
+    let response = server
+        .handle(register, client_ip)
+        .expect("should get error");
 
     match response {
         Message::Error { port } => {
@@ -187,7 +199,10 @@ fn different_ips_get_different_cookies() {
     let cookie1 = cookie_auth.generate(ip1, port, bucket);
     let cookie2 = cookie_auth.generate(ip2, port, bucket);
 
-    assert_ne!(cookie1, cookie2, "Different IPs should get different cookies");
+    assert_ne!(
+        cookie1, cookie2,
+        "Different IPs should get different cookies"
+    );
 
     // Verify cross-usage fails
     assert!(!cookie_auth.verify(ip1, port, &cookie2, &[bucket]));
@@ -204,7 +219,10 @@ fn different_ports_get_different_cookies() {
     let cookie1 = cookie_auth.generate(ip, 8080, bucket);
     let cookie2 = cookie_auth.generate(ip, 8081, bucket);
 
-    assert_ne!(cookie1, cookie2, "Different ports should get different cookies");
+    assert_ne!(
+        cookie1, cookie2,
+        "Different ports should get different cookies"
+    );
 
     // Verify cross-usage fails
     assert!(!cookie_auth.verify(ip, 8080, &cookie2, &[bucket]));
@@ -245,12 +263,8 @@ fn message_roundtrip_udp() {
     let socket1 = UdpSocket::bind("127.0.0.1:0").expect("bind socket1");
     let socket2 = UdpSocket::bind("127.0.0.1:0").expect("bind socket2");
 
-    socket1
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .unwrap();
-    socket2
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .unwrap();
+    socket1.set_read_timeout(Some(TEST_SOCKET_TIMEOUT)).unwrap();
+    socket2.set_read_timeout(Some(TEST_SOCKET_TIMEOUT)).unwrap();
 
     let addr1 = socket1.local_addr().unwrap();
     let addr2 = socket2.local_addr().unwrap();
@@ -269,7 +283,10 @@ fn message_roundtrip_udp() {
 
     // Send a CHALLENGE back
     let cookie = [0x42; COOKIE_SIZE];
-    let response = Message::Challenge { port: 12345, cookie };
+    let response = Message::Challenge {
+        port: 12345,
+        cookie,
+    };
     socket2.send_to(&response.to_bytes(), addr1).unwrap();
 
     // Receive and verify
@@ -292,7 +309,9 @@ fn multiple_clients_different_ips() {
 
     for client_ip in clients {
         let register = Message::Register { port: 8080 };
-        let response = server.handle(register, client_ip).expect("should get challenge");
+        let response = server
+            .handle(register, client_ip)
+            .expect("should get challenge");
 
         let cookie = match response {
             Message::Challenge { cookie, .. } => cookie,
@@ -328,7 +347,9 @@ mod client_server_integration {
 
         // Client tick should produce SendRegister
         let actions = client.tick(now);
-        assert!(actions.iter().any(|a| matches!(a, Action::SendRegister { .. })));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, Action::SendRegister { .. })));
 
         // Simulate sending REGISTER and getting CHALLENGE
         let register = Message::Register { port };
@@ -341,7 +362,9 @@ mod client_server_integration {
         // Client handles CHALLENGE
         let actions = client.handle_message(challenge, server_addr, now);
         assert_eq!(client.relays[0].state, RelayState::Pending);
-        assert!(actions.iter().any(|a| matches!(a, Action::SendConfirm { .. })));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, Action::SendConfirm { .. })));
 
         // Simulate sending CONFIRM and getting NEIGHBORS
         let confirm = Message::Confirm { port, cookie };
@@ -350,7 +373,13 @@ mod client_server_integration {
         // Client handles NEIGHBORS
         let actions = client.handle_message(neighbors, server_addr, now);
         assert_eq!(client.relays[0].state, RelayState::Connected);
-        assert!(actions.iter().any(|a| matches!(a, Action::NotifyStateChange { state: RelayState::Connected, .. })));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::NotifyStateChange {
+                state: RelayState::Connected,
+                ..
+            }
+        )));
     }
 
     #[test]

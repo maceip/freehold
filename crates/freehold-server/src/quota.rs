@@ -126,7 +126,10 @@ mod tests {
         tracker.register(addr, 8082);
 
         assert_eq!(tracker.count(&addr), 3);
-        assert_eq!(tracker.get_ports(&addr), Some([8080, 8081, 8082].as_slice()));
+        assert_eq!(
+            tracker.get_ports(&addr),
+            Some([8080, 8081, 8082].as_slice())
+        );
         assert_eq!(tracker.total_ports(), 3);
         assert_eq!(tracker.total_ips(), 1);
     }
