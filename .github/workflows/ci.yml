@@ -361,10 +361,8 @@ jobs:
 
       - name: Generate coverage summary
         run: |
-          cargo llvm-cov report --workspace \
-            --exclude freehold-platform-windows \
-            --exclude freehold-android-bridge \
-            --exclude freehold-ebpf
+          # Note: 'report' uses data from previous llvm-cov run, no --exclude needed
+          cargo llvm-cov report
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
