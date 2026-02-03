@@ -250,7 +250,11 @@ jobs:
         id: test
         run: |
           echo "Running tests..."
+          # Run workspace tests, with mock-attestation for enclave tests
           cargo test --workspace --all-targets
+          # Run attestation-specific tests with mock feature
+          cargo test -p freehold-enclave --features mock-attestation
+          cargo test -p freehold-verify
 
   # ============================================
   # UPDATE DEPS.MD ON SUCCESS
