@@ -153,12 +153,20 @@ int freehold_ingress(struct xdp_md *ctx) {
     }
     reg->tokens -= pkt_len;
 
-    // Rewrite
+    // Swap MAC addresses for XDP_TX (send back out same interface)
+    __u8 tmp_mac[ETH_ALEN];
+    __builtin_memcpy(tmp_mac, eth->h_dest, ETH_ALEN);
+    __builtin_memcpy(eth->h_dest, eth->h_source, ETH_ALEN);
+    __builtin_memcpy(eth->h_source, tmp_mac, ETH_ALEN);
+
+    // Rewrite destination IP and port
     __u32 old_daddr = ip->daddr;
     ip->daddr = reg->home_ip;
     udp->dest = bpf_htons(reg->home_port);
     update_ip_csum(ip, old_daddr, reg->home_ip);
     udp->check = 0;
+
+    emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD);
 
     return XDP_TX;
 }
