@@ -59,3 +59,7 @@ bytes = "1.10"
 
 # TLS
 rustls-pemfile = "2.2"
+
+[patch.crates-io]
+h3 = { git = "https://github.com/hyperium/h3", branch = "master" }
+h3-quinn = { git = "https://github.com/hyperium/h3", branch = "master" }

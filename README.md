@@ -69,6 +69,7 @@ You (behind NAT)                    Freehold Relay                    Browser
 - **Anycast routing** — BGP announces your prefix globally
 - **NAT hole-punching** — UDP-based registration works through restrictive NATs
 - **H3/QUIC proxy** — Optional HTTP/3 reverse proxy with automatic TLS
+- **WebSocket over H3** — RFC 9220 Extended CONNECT for WebSocket through QUIC relay
 - **Multi-platform** — Desktop, mobile, and web clients
 
 ## Installation
@@ -186,7 +187,7 @@ freehold-network/
 │   ├── freehold-server/        # Relay server
 │   ├── freehold-client-core/   # Headless client engine
 │   ├── freehold-client/        # CLI with platform UI
-│   ├── freehold-h3-proxy/      # HTTP/3 reverse proxy
+│   ├── freehold-h3-proxy/      # HTTP/3 reverse proxy (+ WebSocket)
 │   ├── freehold-android-bridge/# Android FFI bindings
 │   └── freehold-e2e-tests/     # Integration tests
 ├── platforms/

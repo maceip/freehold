@@ -1,12 +1,12 @@
 [package]
 name = "freehold-h3-proxy"
-description = "HTTP/3 (QUIC) to HTTP/1.1 reverse proxy"
+description = "HTTP/3 (QUIC) to HTTP/1.1 reverse proxy with WebSocket support (RFC 9220)"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 license.workspace = true
 readme = "README.md"
-keywords = ["http3", "quic", "proxy", "h3"]
+keywords = ["http3", "quic", "proxy", "h3", "websocket"]
 categories = ["network-programming", "web-programming"]
 
 [dependencies]
@@ -29,3 +29,10 @@ http-body-util = "0.1"
 
 # TLS/certs
 rcgen = "0.14"
+
+# WebSocket support
+base64 = "0.22"
+fastrand = "2.0"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
