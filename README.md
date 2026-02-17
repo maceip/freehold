@@ -62,11 +62,12 @@ Browser (Alice)                 Freehold Relay                  You (Bob, behind
      |<--------- QUIC response directly from Bob -------------------|
 ```
 
-1. **Bob registers** — sends UDP to the relay, completes HMAC challenge, gets added to the eBPF map
+1. **Bob registers** — sends UDP to the relay, completes HMAC challenge, gets added to the eBPF map. The relay assigns a stable subdomain (`<hash>.freehold.lit.app`) and sets DNS A + HTTPS records
 2. **Alice connects** — sends QUIC to `relay:port`. The XDP program rewrites the destination IP to Bob's address but **leaves Alice's source IP unchanged**
 3. **NAT hole-punch** — if Bob is behind endpoint-dependent NAT, the relay detects the new source and sends a Punch message telling Bob to send a UDP packet to Alice, opening the NAT mapping. QUIC retransmission handles the 1-2s initial latency
 4. **Bob responds directly** — Bob sees Alice's real IP as the packet source and sends the QUIC response straight back to her, bypassing the relay entirely
 5. **Alice's NAT accepts it** — she initiated the outbound UDP, so her NAT allows the reply even though it comes from Bob's IP (QUIC uses connection IDs, not IP tuples)
+6. **TLS via DNS-01** — Bob can request a real TLS certificate by sending an ACME challenge token in the Confirm message. The relay sets `_acme-challenge.<subdomain>.freehold.lit.app` TXT records via Knot DNS
 
 The relay is only in the **inbound** path. Alice doesn't install anything — she just uses a browser.
 
@@ -78,6 +79,8 @@ The relay is only in the **inbound** path. Alice doesn't install anything — sh
 - **NAT hole-punching** — Relay-assisted UDP punch opens endpoint-dependent NATs for arbitrary sources
 - **H3/QUIC proxy** — Optional HTTP/3 reverse proxy with automatic TLS
 - **WebSocket over H3** — RFC 9220 Extended CONNECT for WebSocket through QUIC relay
+- **DemuxSocket** — Engine and Quinn share one UDP socket; zero mux code needed
+- **DNS ACME API** — Clients request TLS certificates via DNS-01 challenges through the relay
 - **Multi-platform** — Desktop, mobile, and web clients
 
 ## Installation
@@ -109,14 +112,16 @@ See [Platforms](#platforms) for native apps on macOS, Windows, Linux, Android, i
 freehold --relay freehold.lit.app:9999 --port 8080
 ```
 
-### With HTTP Backend
+### With HTTP Backend (DemuxSocket)
 
 ```bash
-# Expose HTTP backend via QUIC
+# Expose HTTP backend via QUIC — single shared socket, zero mux code
 freehold --relay freehold.lit.app:9999 --port 443 \
   --backend 127.0.0.1:3000 \
   --domain myapp.example.com
 ```
+
+Engine registration and Quinn H3/QUIC share one UDP socket via `DemuxSocket`. Packets with magic byte `0x46` go to Engine; everything else (QUIC) goes to Quinn. No socket conflicts, no configuration needed.
 
 ### Headless Mode
 
@@ -184,20 +189,38 @@ freehold.lit.app:9999
 
 This relay announces the `142.248.222.0/24` anycast prefix.
 
+## Examples
+
+End-to-end examples in [`examples/`](examples/):
+
+- **[`heartbeat-ws`](examples/heartbeat-ws/)** — Rust WebSocket server that sends `{"ts", "seq"}` heartbeats every second. Runs behind Freehold's H3 proxy using `Service` (DemuxSocket under the hood).
+- **[`android-ws-client`](examples/android-ws-client/)** — Android Compose app using Cronet HTTP/3 to connect to the heartbeat server through Freehold.
+
+```bash
+# Run the heartbeat server locally
+cargo run -p heartbeat-ws -- --port 8443
+
+# Or with relay registration
+cargo run -p heartbeat-ws -- --relay freehold.lit.app:9999 --relay-port 55126
+```
+
 ## Architecture
 
 ```
-freehold-network/
+freehold/
 ├── crates/
-│   ├── freehold-api/           # Wire protocol
+│   ├── freehold-api/           # Wire protocol (Register, Challenge, Confirm, Punch, DNS ACME)
 │   ├── freehold-common/        # Shared types (eBPF maps, events)
 │   ├── freehold-ebpf/          # XDP packet forwarder
-│   ├── freehold-server/        # Relay server
-│   ├── freehold-client-core/   # Headless client engine
+│   ├── freehold-server/        # Relay server (+ Knot DNS integration)
+│   ├── freehold-client-core/   # Headless client engine (+ DemuxSocket)
 │   ├── freehold-client/        # CLI with platform UI
-│   ├── freehold-h3-proxy/      # HTTP/3 reverse proxy (+ WebSocket)
+│   ├── freehold-h3-proxy/      # HTTP/3 reverse proxy (+ WebSocket RFC 9220)
 │   ├── freehold-android-bridge/# Android FFI bindings
 │   └── freehold-e2e-tests/     # Integration tests
+├── examples/
+│   ├── heartbeat-ws/           # WebSocket heartbeat server
+│   └── android-ws-client/      # Android Cronet H3 client
 ├── platforms/
 │   ├── macos/                  # Swift menu bar app
 │   ├── windows/                # C# system tray
