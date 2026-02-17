@@ -12,12 +12,11 @@ members = [
     "crates/freehold-e2e-tests",
     # Examples
     "examples/heartbeat-ws",
-    # Platform-specific (only built in CI for their target platforms)
-    "platforms/windows",
 ]
 
-# Exclude platforms from default workspace build
+# Platform crates — only built in CI for their target platforms
 exclude = [
+    "platforms/windows",
     "platforms/macos",
     "platforms/linux",
     "platforms/web",

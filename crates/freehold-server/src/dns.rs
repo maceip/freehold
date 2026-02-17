@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::process::Command;
 use std::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Manages DNS records via knotc CLI
 pub struct DnsManager {
@@ -161,7 +161,6 @@ impl TxtRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn rate_limiter_allows_first_request() {

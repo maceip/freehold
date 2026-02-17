@@ -815,6 +815,7 @@ dependencies = [
  "quinn",
  "rand",
  "rcgen 0.13.2",
+ "rustls",
  "rustls-pemfile",
  "serde",
  "serde_json",

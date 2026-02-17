@@ -711,7 +711,9 @@ impl Service {
         );
 
         // 4. Create command channel for ACME -> Engine communication
-        let (cmd_tx, cmd_rx) = mpsc::channel::<EngineCommand>(16);
+        let (_cmd_tx, cmd_rx) = mpsc::channel::<EngineCommand>(16);
+        #[cfg(feature = "acme")]
+        let cmd_tx = _cmd_tx;
 
         // 5. Create Engine in demux mode (sends via cloned FD, receives via channel)
         let mut engine = Engine::new_demuxed(
@@ -772,7 +774,7 @@ async fn run_acme_task(
     endpoint: quinn::Endpoint,
     status_tx: mpsc::Sender<StatusUpdate>,
 ) -> Result<()> {
-    use std::sync::Arc;
+    use anyhow::Context as _;
 
     // Wait for subdomain assignment
     loop {

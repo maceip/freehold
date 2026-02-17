@@ -24,6 +24,7 @@ quinn = { version = "0.11", optional = true }
 # ACME certificate management (optional)
 instant-acme = { version = "0.7", optional = true }
 rcgen = { version = "0.13", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 rustls-pemfile = { version = "2.2", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
@@ -32,7 +33,7 @@ dirs = { version = "6", optional = true }
 [features]
 default = ["h3-proxy"]
 h3-proxy = ["freehold-h3-proxy", "quinn"]
-acme = ["instant-acme", "rcgen", "rustls-pemfile", "serde", "serde_json", "dirs", "h3-proxy"]
+acme = ["instant-acme", "rcgen", "rustls", "rustls-pemfile", "serde", "serde_json", "dirs", "h3-proxy"]
 
 [dev-dependencies]
 proptest = "1.5"

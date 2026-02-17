@@ -6,17 +6,17 @@
 //! 3. If none/expired, request DNS records via Engine, then run ACME DNS-01
 //! 4. Hot-swap the cert into the running Quinn endpoint
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use instant_acme::{
-    Account, AuthorizationStatus, ChallengeType, Identifier, KeyAuthorization, NewAccount,
+    Account, AuthorizationStatus, ChallengeType, Identifier, NewAccount,
     NewOrder, OrderStatus,
 };
 use rcgen::{CertificateParams, KeyPair};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::EngineCommand;
 
@@ -134,7 +134,6 @@ impl AcmeManager {
             .context("set challenge ready")?;
 
         // 7. Poll order status
-        let order_url = order.url().to_string();
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
