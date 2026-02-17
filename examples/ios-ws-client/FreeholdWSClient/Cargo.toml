@@ -1,0 +1,27 @@
+[package]
+name = "freehold-ws-client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Rust QUIC/H3 WebSocket client for iOS — C FFI for Swift"
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+name = "freehold_ws_client"
+
+[dependencies]
+quinn = "0.11"
+h3 = "0.0.6"
+h3-quinn = "0.0.7"
+http = "1"
+bytes = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+
+[build-dependencies]
+cbindgen = "0.28"

@@ -1,0 +1,4 @@
+module FreeholdWSClient {
+    header "freehold_ws_client.h"
+    export *
+}

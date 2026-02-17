@@ -1,0 +1,21 @@
+language = "C"
+header = "/* Auto-generated — do not edit */"
+
+include_guard = "FREEHOLD_WS_CLIENT_H"
+include_version = true
+
+[export]
+include = [
+    "FFIConnectionState",
+    "FFIWSMessage",
+]
+
+[export.rename]
+"FFIConnectionState" = "WSConnectionState"
+"FFIWSMessage" = "WSMessage"
+
+[enum]
+rename_variants = "ScreamingSnakeCase"
+
+[struct]
+rename_fields = "CamelCase"

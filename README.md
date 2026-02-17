@@ -194,6 +194,7 @@ This relay announces the `142.248.222.0/24` anycast prefix.
 End-to-end examples in [`examples/`](examples/):
 
 - **[`heartbeat-ws`](examples/heartbeat-ws/)** — Rust WebSocket server that sends `{"ts", "seq"}` heartbeats every second. Runs behind Freehold's H3 proxy using `Service` (DemuxSocket under the hood).
+- **[`ios-ws-client`](examples/ios-ws-client/)** — iOS SwiftUI app with Rust QUIC/H3 networking (quinn + h3), bridged via C FFI. Full Extended CONNECT WebSocket client.
 - **[`android-ws-client`](examples/android-ws-client/)** — Android Compose app using Cronet HTTP/3 to connect to the heartbeat server through Freehold.
 - **[`nextjs-app`](examples/nextjs-app/)** — Next.js app with API routes, exposed through Freehold's H3 proxy. Zero changes to Next.js code.
 - **[`python-backend`](examples/python-backend/)** — Flask API backend exposed through Freehold. Includes health check, time, and echo endpoints.
@@ -222,6 +223,7 @@ freehold/
 │   └── freehold-e2e-tests/     # Integration tests
 ├── examples/
 │   ├── heartbeat-ws/           # WebSocket heartbeat server
+│   ├── ios-ws-client/          # iOS Rust+SwiftUI QUIC/H3 client
 │   ├── android-ws-client/      # Android Cronet H3 client
 │   ├── nextjs-app/             # Next.js frontend + API routes
 │   └── python-backend/         # Flask API backend
