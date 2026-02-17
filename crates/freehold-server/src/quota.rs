@@ -24,6 +24,7 @@ impl QuotaTracker {
     /// Register a port for an IP address.
     ///
     /// If the port was previously registered by another IP, it is reassigned.
+    /// If the same IP re-registers the same port, this is a no-op (no duplicate).
     pub fn register(&mut self, ip: Ipv4Addr, port: u16) {
         // Remove any existing registration for this port
         if let Some(old_ip) = self.ip_by_port.remove(&port) {
@@ -36,7 +37,10 @@ impl QuotaTracker {
         }
         // Register the new assignment
         self.ip_by_port.insert(port, ip);
-        self.ports_by_ip.entry(ip).or_default().push(port);
+        let ports = self.ports_by_ip.entry(ip).or_default();
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
     }
 
     /// Unregister a port, removing its IP association.
@@ -248,10 +252,10 @@ mod tests {
         tracker.register(addr, 8080);
         tracker.register(addr, 8080); // Same IP, same port
 
-        // Should still only count as 1
-        // Note: current implementation adds duplicate, this test documents behavior
-        // If this is a bug, the implementation should be fixed
+        // Must count as 1, not 2 — no duplicates allowed
+        assert_eq!(tracker.count(&addr), 1);
         assert_eq!(tracker.get_owner(8080), Some(addr));
+        assert_eq!(tracker.total_ports(), 1);
     }
 }
 

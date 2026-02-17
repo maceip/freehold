@@ -250,7 +250,6 @@ mod tests {
         assert_eq!(cookie.len(), COOKIE_SIZE);
         assert_eq!(COOKIE_SIZE, 16);
     }
-}
 
     #[test]
     fn subdomain_deterministic() {
