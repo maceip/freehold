@@ -62,12 +62,12 @@ Browser (Alice)                 Freehold Relay                  You (Bob, behind
      |<--------- QUIC response directly from Bob -------------------|
 ```
 
-1. **Bob registers** — sends UDP to the relay, completes HMAC challenge, gets added to the eBPF map. The relay assigns a stable subdomain (`<hash>.freehold.lit.app`) and sets DNS A + HTTPS records
+1. **Bob registers** — sends UDP to the relay, completes HMAC challenge, gets added to the eBPF map. The relay assigns a stable subdomain (`<hash>.freehold.lit.app`) and returns it in the Neighbors response
 2. **Alice connects** — sends QUIC to `relay:port`. The XDP program rewrites the destination IP to Bob's address but **leaves Alice's source IP unchanged**
 3. **NAT hole-punch** — if Bob is behind endpoint-dependent NAT, the relay detects the new source and sends a Punch message telling Bob to send a UDP packet to Alice, opening the NAT mapping. QUIC retransmission handles the 1-2s initial latency
 4. **Bob responds directly** — Bob sees Alice's real IP as the packet source and sends the QUIC response straight back to her, bypassing the relay entirely
 5. **Alice's NAT accepts it** — she initiated the outbound UDP, so her NAT allows the reply even though it comes from Bob's IP (QUIC uses connection IDs, not IP tuples)
-6. **TLS via DNS-01** — Bob can request a real TLS certificate by sending an ACME challenge token in the Confirm message. The relay sets `_acme-challenge.<subdomain>.freehold.lit.app` TXT records via Knot DNS
+6. **TLS via DNS-01** — After proving reachability (eBPF map check), Bob sends `CreateRecords` to create DNS A + HTTPS records. His client then runs an ACME DNS-01 flow (`SetAcmeTxt` → Let's Encrypt validates → `ClearAcmeTxt`) and hot-swaps the certificate into the running QUIC endpoint with zero downtime. When `acme_cache_dir` is set, this happens automatically
 
 The relay is only in the **inbound** path. Alice doesn't install anything — she just uses a browser.
 
@@ -80,7 +80,7 @@ The relay is only in the **inbound** path. Alice doesn't install anything — sh
 - **H3/QUIC proxy** — Optional HTTP/3 reverse proxy with automatic TLS
 - **WebSocket over H3** — RFC 9220 Extended CONNECT for WebSocket through QUIC relay
 - **DemuxSocket** — Engine and Quinn share one UDP socket; zero mux code needed
-- **DNS ACME API** — Clients request TLS certificates via DNS-01 challenges through the relay
+- **Automatic ACME certs** — Deferred DNS + automated Let's Encrypt DNS-01 with cert caching and zero-downtime hot-swap
 - **Multi-platform** — Desktop, mobile, and web clients
 
 ## Installation
@@ -237,6 +237,14 @@ freehold/
 └── tests/
     └── e2e/                    # Network namespace E2E tests
 ```
+
+## Publishing to crates.io
+
+`freehold-api` can be published now. The remaining crates (`freehold-h3-proxy`, `freehold-client-core`) are blocked on the `h3` crate publishing a release with RFC 9220 WebSocket Extended CONNECT support (`Protocol::WEBSOCKET`). We currently patch `h3`/`h3-quinn` from git master for this. Once `h3` publishes a new version (>0.0.8) with that API, remove the `[patch.crates-io]` section from the workspace `Cargo.toml` and publish in order:
+
+1. `freehold-api`
+2. `freehold-h3-proxy`
+3. `freehold-client-core`
 
 ## Contributing
 

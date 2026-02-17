@@ -57,11 +57,21 @@ byte `0x46` (ASCII "F" for Freehold).
 ### What about TLS certificates?
 
 When Bob registers, the relay computes an HMAC-derived subdomain —
-something like `a7xk2m.freehold.lit.app` — and sets DNS A + HTTPS
-records for it. Bob can then use DNS-01 ACME challenges to get a real
-Let's Encrypt certificate for that subdomain. He sends the challenge
-token in his `Confirm` message, the relay sets the `_acme-challenge` TXT
-record, and Bob completes the ACME flow. Now Chrome trusts his cert.
+something like `a7xk2m.freehold.lit.app` — and returns it in the
+Neighbors response. DNS records are **not** created yet.
+
+To get a real TLS certificate, Bob's client:
+1. Sends `CreateRecords` — the relay checks that Bob is actually
+   reachable (eBPF map lookup), then creates DNS A + HTTPS records
+2. Sends `SetAcmeTxt` with the ACME challenge token — the relay sets
+   `_acme-challenge.<subdomain>` TXT record
+3. Let's Encrypt validates the domain
+4. Sends `ClearAcmeTxt` to clean up
+5. Hot-swaps the new cert into the running QUIC endpoint (zero downtime)
+
+When `acme_cache_dir` is set, this all happens automatically in the
+background. On restart, cached certs load in milliseconds — no round-trip
+to Let's Encrypt unless the cert is expiring.
 
 Clients connect using the subdomain (`https://a7xk2m.freehold.lit.app:8443`),
 which gives them correct TLS SNI matching. No certificate warnings.
@@ -216,3 +226,125 @@ pip install -r requirements.txt
      │              Flask / Next.js / anything       │
      └──────────────────────────────────────────────┘
 ```
+
+---
+
+## The protocol, explained for golden retrievers
+
+You are a golden retriever named Bob. You live in an apartment (behind NAT).
+You want your friend Alice (a browser) to visit, but she doesn't know
+your apartment number, and the doorman won't let strangers in.
+
+Here's what happens. On the left, what it *feels* like. On the right,
+the actual bytes on the wire.
+
+### 1. Bob goes to the park (REGISTER)
+
+> *"I'm Bob! I want apartment 8443!"*
+
+Bob trots up to the relay (the park ranger) and says hi.
+
+```
+Bob → Relay:  [0x46, 0x01, 0x20, 0xFB]
+               magic  REG   port 8443 (big-endian)
+```
+
+### 2. The ranger checks Bob's collar (CHALLENGE)
+
+> *"Hmm, prove you're really Bob. Sniff this cookie."*
+
+The relay sends back a 16-byte HMAC cookie. Only a dog at Bob's real
+IP address will receive it — that's the whole point.
+
+```
+Relay → Bob:  [0x46, 0x02, 0x20, 0xFB, cookie_16_bytes...]
+               magic  CHAL  port 8443   the cookie to sniff
+```
+
+### 3. Bob returns the cookie (CONFIRM)
+
+> *"I sniffed it! Here it is! Same cookie!"*
+
+Bob echoes the cookie back. The relay verifies the HMAC. If it checks
+out, Bob gets added to the eBPF map. The park now knows where Bob lives.
+
+```
+Bob → Relay:  [0x46, 0x03, 0x20, 0xFB, same_cookie_16_bytes...]
+               magic  CONF  port 8443   proof of sniffing
+```
+
+### 4. The ranger tells Bob about the neighborhood (NEIGHBORS)
+
+> *"Welcome! Here are the other park rangers, and your park name is a7xk2m."*
+
+```
+Relay → Bob:  [0x46, 0x05, 0x02, 10,0,0,1, 10,0,0,2, 0x06, "a7xk2m"]
+               magic  NEIGH count  relay1     relay2    len   subdomain
+```
+
+Bob now has a subdomain (`a7xk2m.freehold.lit.app`) but no DNS records yet.
+The ranger doesn't put up a sign until Bob proves he actually lives there.
+
+### 5. Bob asks for a sign on the door (CreateRecords)
+
+> *"I've been here a while. Can you put my name on the mailbox?"*
+
+Bob sends another Confirm with action byte `0x03`. The ranger checks
+the eBPF map — yep, Bob is still there, heartbeating, reachable. Sign goes up.
+
+```
+Bob → Relay:  [0x46, 0x03, 0x20, 0xFB, cookie..., 0x03, 0x00]
+               magic  CONF  port 8443   cookie     CREATE len=0
+```
+
+DNS records created: `a7xk2m.freehold.lit.app → relay IP, port 8443`
+
+### 6. Bob gets a real name tag (ACME)
+
+> *"I want a REAL name tag from the AKC, not a handwritten one!"*
+
+Bob's ACME module sends `SetAcmeTxt` with the Let's Encrypt challenge:
+
+```
+Bob → Relay:  [0x46, 0x03, port, cookie..., 0x01, 0x2B, "dGVzdC1h..."]
+               magic  CONF                   SET   len=43  base64 token
+```
+
+Let's Encrypt checks the TXT record, approves. Bob sends `ClearAcmeTxt`:
+
+```
+Bob → Relay:  [0x46, 0x03, port, cookie..., 0x02, 0x00]
+               magic  CONF                   CLR   len=0
+```
+
+Bob now has a real TLS certificate. He hot-swaps it into his QUIC
+endpoint. No downtime. Very good boy.
+
+### 7. Bob keeps wagging (HEARTBEAT)
+
+> *"I'm still here! Still here! Still here!"*
+
+Every 25 seconds, Bob sends a tiny heartbeat so the ranger doesn't
+erase him from the map.
+
+```
+Bob → Relay:  [0x46, 0x04, 0x20, 0xFB]
+               magic  BEAT  port 8443
+```
+
+### 8. Alice shows up (QUIC)
+
+> *"Hi, is Bob here?" (Alice doesn't know any of this happened)*
+
+Alice's browser sends QUIC to `a7xk2m.freehold.lit.app:8443`. The
+XDP kernel program rewrites the destination to Bob's real IP. Alice's
+source IP is preserved. Bob responds directly to Alice. The relay is
+out of the loop. Alice sees a valid Let's Encrypt cert. Everyone is happy.
+
+```
+Alice → Relay:  QUIC ClientHello to port 8443
+Kernel:         rewrites dst_ip → Bob's IP (XDP, wire speed)
+Bob → Alice:    QUIC ServerHello directly back (bypasses relay)
+```
+
+Alice pets Bob. Bob wags. The end.

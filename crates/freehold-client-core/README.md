@@ -36,6 +36,12 @@ async fn main() -> anyhow::Result<()> {
                 StatusUpdate::NeighborDiscovered(ip) => {
                     println!("Found neighbor relay: {}", ip);
                 }
+                StatusUpdate::SubdomainAssigned(sub) => {
+                    println!("Subdomain: {}", sub);
+                }
+                StatusUpdate::AcmeCertReady => {
+                    println!("ACME cert installed");
+                }
                 StatusUpdate::Error(msg) => {
                     eprintln!("Error: {}", msg);
                 }
@@ -73,6 +79,7 @@ let service = Service::new(ServiceConfig {
     certs,
     key,
     auto_discover: true,
+    acme_cache_dir: None, // Some(path) to enable automatic ACME certs
 }, status_tx)?;
 
 service.run(shutdown_rx).await?;
@@ -112,6 +119,26 @@ let actions = sm.handle_message(message, from_addr, Instant::now());
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `h3-proxy` | Yes | Include H3/QUIC proxy support |
+| `acme` | No | Automatic Let's Encrypt certs via DNS-01 (requires `h3-proxy`) |
+
+## Automatic ACME Certificates
+
+Enable the `acme` feature and set `acme_cache_dir` to automatically obtain
+and renew Let's Encrypt certificates:
+
+```toml
+[dependencies]
+freehold-client-core = { version = "1.0", features = ["h3-proxy", "acme"] }
+```
+
+The ACME task runs in the background:
+1. Waits for subdomain assignment from the relay
+2. Checks disk cache for a valid cert — if found, hot-swaps immediately
+3. Sends `CreateRecords` to create DNS A + HTTPS records
+4. Runs DNS-01 flow (`SetAcmeTxt` → validate → `ClearAcmeTxt`)
+5. Hot-swaps the cert into the running QUIC endpoint (zero downtime)
+
+Monitor via `StatusUpdate::SubdomainAssigned` and `StatusUpdate::AcmeCertReady`.
 
 ## Architecture
 

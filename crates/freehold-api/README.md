@@ -27,8 +27,9 @@ match msg {
         let bytes = response.to_bytes();
         // Send bytes back to client
     }
-    Message::Confirm { port, cookie } => {
+    Message::Confirm { port, cookie, action } => {
         // Verify cookie and complete registration
+        // action is ConfirmAction::None, SetTxt, ClearTxt, or CreateRecords
     }
     Message::Heartbeat { port } => {
         // Refresh registration TTL
@@ -45,7 +46,8 @@ match msg {
 | `Challenge` | Server → Client | HMAC cookie challenge |
 | `Confirm` | Client → Server | Echo cookie to confirm |
 | `Heartbeat` | Client → Server | Keep registration alive |
-| `Neighbors` | Server → Client | List of other relays |
+| `Neighbors` | Server → Client | List of other relays + subdomain |
+| `Punch` | Server → Client | NAT hole-punch request |
 | `Error` | Server → Client | Registration rejected |
 
 ## Wire Format
@@ -55,11 +57,25 @@ All messages start with magic byte `0x46` ('F') followed by message type:
 ```
 Register:   [0x46, 0x01, port_be16]
 Challenge:  [0x46, 0x02, port_be16, cookie[16]]
-Confirm:    [0x46, 0x03, port_be16, cookie[16]]
+Confirm:    [0x46, 0x03, port_be16, cookie[16], action?, ...]
 Heartbeat:  [0x46, 0x04, port_be16]
-Neighbors:  [0x46, 0x05, count, ip1[4], ip2[4], ...]
+Neighbors:  [0x46, 0x05, count, ip1[4], ..., subdomain_len?, subdomain?]
+Punch:      [0x46, 0x06, ip[4], port_be16]
 Error:      [0x46, 0xFF, port_be16]
 ```
+
+## Confirm Actions
+
+The Confirm message supports optional trailing action bytes for DNS/ACME operations:
+
+| Action | Byte | Payload | Purpose |
+|--------|------|---------|---------|
+| `None` | (omitted) | — | Standard registration |
+| `SetTxt` | `0x01` | `[len, data...]` | Set ACME DNS-01 TXT record |
+| `ClearTxt` | `0x02` | `[0x00]` | Clear ACME TXT record |
+| `CreateRecords` | `0x03` | `[0x00]` | Request DNS A + HTTPS records |
+
+`CreateRecords` requires the client to already be registered in the eBPF map (proving reachability). DNS records are not created during initial registration.
 
 ## Timing Constants
 
