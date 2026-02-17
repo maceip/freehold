@@ -58,67 +58,63 @@ impl DnsManager {
 
     /// Set A record for a subdomain pointing to relay IP
     pub fn set_a(&self, subdomain: &str, ip: Ipv4Addr) -> Result<()> {
-        let fqdn = format!("{}.{}", subdomain, self.zone);
         self.transaction(|mgr| {
-            mgr.knotc(&["zone-set", &mgr.zone, &fqdn, "A", &ip.to_string()])?;
-            debug!("DNS: set {} A {}", fqdn, ip);
+            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "A", &ip.to_string()])?;
+            debug!("DNS: set {}.{} A {}", subdomain, mgr.zone, ip);
             Ok(())
         })
     }
 
     /// Set HTTPS record for a subdomain with h3 ALPN and port
     pub fn set_https(&self, subdomain: &str, port: u16) -> Result<()> {
-        let fqdn = format!("{}.{}", subdomain, self.zone);
         let svcb_params = format!("1 . alpn=h3 port={}", port);
         self.transaction(|mgr| {
-            mgr.knotc(&["zone-set", &mgr.zone, &fqdn, "HTTPS", &svcb_params])?;
-            debug!("DNS: set {} HTTPS {}", fqdn, svcb_params);
+            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "HTTPS", &svcb_params])?;
+            debug!("DNS: set {}.{} HTTPS {}", subdomain, mgr.zone, svcb_params);
             Ok(())
         })
     }
 
     /// Set TXT record for ACME DNS-01 challenge
     pub fn set_txt(&self, subdomain: &str, token: &str) -> Result<()> {
-        let fqdn = format!("_acme-challenge.{}.{}", subdomain, self.zone);
+        let acme_name = format!("_acme-challenge.{}", subdomain);
         self.transaction(|mgr| {
-            mgr.knotc(&["zone-set", &mgr.zone, &fqdn, "TXT", token])?;
-            debug!("DNS: set {} TXT {}", fqdn, token);
+            mgr.knotc(&["zone-set", &mgr.zone, &acme_name, "60", "TXT", token])?;
+            debug!("DNS: set {}.{} TXT {}", acme_name, mgr.zone, token);
             Ok(())
         })
     }
 
     /// Clear TXT record for ACME challenge
     pub fn clear_txt(&self, subdomain: &str) -> Result<()> {
-        let fqdn = format!("_acme-challenge.{}.{}", subdomain, self.zone);
+        let acme_name = format!("_acme-challenge.{}", subdomain);
         self.transaction(|mgr| {
-            mgr.knotc(&["zone-unset", &mgr.zone, &fqdn, "TXT"])?;
-            debug!("DNS: cleared {} TXT", fqdn);
+            mgr.knotc(&["zone-unset", &mgr.zone, &acme_name, "TXT"])?;
+            debug!("DNS: cleared {}.{} TXT", acme_name, mgr.zone);
             Ok(())
         })
     }
 
     /// Clear all DNS records for a subdomain (A, HTTPS, TXT)
     pub fn clear_all(&self, subdomain: &str) -> Result<()> {
-        let fqdn = format!("{}.{}", subdomain, self.zone);
-        let acme_fqdn = format!("_acme-challenge.{}.{}", subdomain, self.zone);
+        let acme_name = format!("_acme-challenge.{}", subdomain);
         self.transaction(|mgr| {
             // Best-effort removal - ignore errors for records that don't exist
-            let _ = mgr.knotc(&["zone-unset", &mgr.zone, &fqdn, "A"]);
-            let _ = mgr.knotc(&["zone-unset", &mgr.zone, &fqdn, "HTTPS"]);
-            let _ = mgr.knotc(&["zone-unset", &mgr.zone, &acme_fqdn, "TXT"]);
-            debug!("DNS: cleared all records for {}", subdomain);
+            let _ = mgr.knotc(&["zone-unset", &mgr.zone, subdomain, "A"]);
+            let _ = mgr.knotc(&["zone-unset", &mgr.zone, subdomain, "HTTPS"]);
+            let _ = mgr.knotc(&["zone-unset", &mgr.zone, &acme_name, "TXT"]);
+            debug!("DNS: cleared all records for {}.{}", subdomain, mgr.zone);
             Ok(())
         })
     }
 
     /// Set up registration records (A + HTTPS) in a single transaction
     pub fn set_registration(&self, subdomain: &str, ip: Ipv4Addr, port: u16) -> Result<()> {
-        let fqdn = format!("{}.{}", subdomain, self.zone);
         let svcb_params = format!("1 . alpn=h3 port={}", port);
         self.transaction(|mgr| {
-            mgr.knotc(&["zone-set", &mgr.zone, &fqdn, "A", &ip.to_string()])?;
-            mgr.knotc(&["zone-set", &mgr.zone, &fqdn, "HTTPS", &svcb_params])?;
-            debug!("DNS: registered {} A {} HTTPS {}", fqdn, ip, svcb_params);
+            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "A", &ip.to_string()])?;
+            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "HTTPS", &svcb_params])?;
+            debug!("DNS: registered {}.{} A {} HTTPS {}", subdomain, mgr.zone, ip, svcb_params);
             Ok(())
         })
     }
