@@ -150,7 +150,7 @@ jobs:
 
           cat > npm-pkg/package.json << 'EOF'
           {
-            "name": "@mac/${{ matrix.name }}",
+            "name": "@mac!/${{ matrix.name }}",
             "version": "0.1.0",
             "description": "Scute binary for ${{ matrix.name }}",
             "os": ["${{ matrix.npm-os }}"],
@@ -232,7 +232,7 @@ jobs:
 
           cat > npm-pkg/package.json << 'EOF'
           {
-            "name": "@mac/${{ matrix.name }}",
+            "name": "@mac!/${{ matrix.name }}",
             "version": "0.1.0",
             "description": "Scute shared library for ${{ matrix.name }}",
             "os": ["android"],
@@ -328,7 +328,7 @@ jobs:
 
           cat > npm-pkg/package.json << 'EOF'
           {
-            "name": "@mac/ios-arm64",
+            "name": "@mac!/ios-arm64",
             "version": "0.1.0",
             "description": "Scute static library for iOS (device + simulator)",
             "os": ["darwin"],
@@ -394,12 +394,12 @@ jobs:
           for platform in "${PLATFORMS[@]}"; do
             dir="artifacts/scute-${platform}"
             if [ -d "$dir" ]; then
-              echo "Publishing @mac/${platform}..."
+              echo "Publishing @mac!/${platform}..."
               cd "$dir"
-              npm publish --provenance --access public || echo "Failed to publish @mac/${platform}"
+              npm publish --provenance --access public || echo "Failed to publish @mac!/${platform}"
               cd -
             else
-              echo "Skipping @mac/${platform} — artifact not found"
+              echo "Skipping @mac!/${platform} — artifact not found"
             fi
           done
 
