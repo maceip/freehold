@@ -215,7 +215,6 @@ async fn handle_webtransport(
     loop {
         match session.accept_bi().await {
             Ok(Some(AcceptedBi::BidiStream(_sid, wt_stream))) => {
-                let backend = backend;
                 tokio::spawn(async move {
                     if let Err(e) = proxy_webtransport_bidi(wt_stream, backend).await {
                         debug!("WebTransport bidi stream error: {:?}", e);
