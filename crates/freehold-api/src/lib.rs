@@ -21,11 +21,13 @@ pub mod timing {
     /// Time bucket for cookie generation
     pub const TIME_BUCKET: Duration = Duration::from_secs(30);
 
-    /// Registration TTL - must heartbeat within this
-    pub const REGISTRATION_TTL: Duration = Duration::from_secs(60);
+    /// Registration TTL — relay expires registration after this (270 seconds)
+    /// 3x heartbeat interval: survives up to 2 missed heartbeats.
+    pub const REGISTRATION_TTL: Duration = Duration::from_secs(270);
 
-    /// Heartbeat interval - should be < TTL
-    pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
+    /// Heartbeat interval — doubles as NAT keepalive (90 seconds)
+    /// RFC 4787 requires NAT mappings to last at least 2 minutes.
+    pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(90);
 
     /// Timeout waiting for challenge response
     pub const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
