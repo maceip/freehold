@@ -382,6 +382,16 @@ fn convert_status_update(update: StatusUpdate) -> FFIStatusUpdate {
                 .map(|s| s.into_raw())
                 .unwrap_or(ptr::null_mut()),
         },
+        StatusUpdate::Traffic { .. }
+        | StatusUpdate::PortChanged { .. }
+        | StatusUpdate::SubdomainAssigned(_)
+        | StatusUpdate::AcmeCertReady => FFIStatusUpdate {
+            update_type: FFIStatusType::Error,
+            relay_addr: ptr::null_mut(),
+            relay_state: FFIRelayState::Disconnected,
+            neighbor_ip: ptr::null_mut(),
+            error_message: ptr::null_mut(),
+        },
     }
 }
 

@@ -145,19 +145,34 @@ impl Server {
                 self.quotas.write().await.register(ip, port);
                 info!("CONFIRMED {} port {} -> {}:{}", ip, port, ip, from.port());
 
-                // Compute subdomain and handle DNS
+                // Compute subdomain and handle DNS / ACME actions
                 let subdomain = self.cookie_auth.subdomain(ip, port);
 
-                if let Some(ref dns) = self.dns_manager {
-                    if let Some(primary_ip) = self.primary_ip {
-                        if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
-                            warn!("DNS registration failed for {}: {}", subdomain, e);
+                match action {
+                    freehold_api::ConfirmAction::CreateRecords => {
+                        // Reachability check: port must already exist in eBPF map
+                        let is_registered = match self.registrations.read().await.get(&port, 0) {
+                            Ok(reg) => {
+                                let reg_ip = Ipv4Addr::from(u32::from_be(reg.home_ip));
+                                reg_ip == ip
+                            }
+                            Err(_) => false,
+                        };
+                        if !is_registered {
+                            warn!("CreateRecords rejected for {}:{} — not registered", ip, port);
+                            socket.send_to(&Message::Error { port }.to_bytes(), from)?;
+                            return Ok(());
+                        }
+                        if let Some(ref dns) = self.dns_manager {
+                            if let Some(primary_ip) = self.primary_ip {
+                                if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
+                                    warn!("DNS registration failed for {}: {}", subdomain, e);
+                                    socket.send_to(&Message::Error { port }.to_bytes(), from)?;
+                                    return Ok(());
+                                }
+                            }
                         }
                     }
-                }
-
-                // Handle ACME actions
-                match action {
                     freehold_api::ConfirmAction::SetTxt(data) => {
                         if let Some(ref dns) = self.dns_manager {
                             if !self.txt_rate.check(port) {

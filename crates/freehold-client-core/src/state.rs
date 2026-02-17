@@ -88,6 +88,8 @@ pub enum Action {
     NotifyError { error: ClientError },
     /// Add a new relay to track
     AddRelay { addr: SocketAddr },
+    /// Notify that a subdomain has been assigned
+    NotifySubdomain { subdomain: String },
 }
 
 /// Relay state tracking
@@ -203,6 +205,8 @@ pub struct StateMachine {
     pub relays: Vec<RelayInfo>,
     pub neighbors: HashSet<Ipv4Addr>,
     pub auto_discover: bool,
+    /// Track last seen subdomain to avoid duplicate notifications
+    last_subdomain: Option<String>,
 }
 
 impl StateMachine {
@@ -212,6 +216,7 @@ impl StateMachine {
             relays: vec![RelayInfo::new(initial_relay)],
             neighbors: HashSet::new(),
             auto_discover,
+            last_subdomain: None,
         }
     }
 
@@ -294,9 +299,13 @@ impl StateMachine {
                         state: RelayState::Connected,
                     });
                 }
-                // Store subdomain if relay provided one
-                if subdomain.is_some() {
-                    self.relays[idx].subdomain = subdomain;
+                // Store subdomain if relay provided one, notify if new
+                if let Some(ref sub) = subdomain {
+                    self.relays[idx].subdomain = subdomain.clone();
+                    if self.last_subdomain.as_ref() != Some(sub) {
+                        self.last_subdomain = Some(sub.clone());
+                        actions.push(Action::NotifySubdomain { subdomain: sub.clone() });
+                    }
                 }
                 self.relays[idx].last_activity = Some(now);
 
@@ -351,6 +360,14 @@ impl StateMachine {
     /// Get relay states for UI
     pub fn relay_states(&self) -> Vec<(SocketAddr, RelayState)> {
         self.relays.iter().map(|r| (r.addr, r.state)).collect()
+    }
+
+    /// Request an ACME/DNS action via the first connected relay
+    pub fn request_action(&self, action: ConfirmAction) -> Option<Action> {
+        self.relays
+            .iter()
+            .position(|r| r.state == RelayState::Connected)
+            .map(|relay_idx| Action::SendConfirmWithAction { relay_idx, action })
     }
 
     /// Change port (request new endpoint)

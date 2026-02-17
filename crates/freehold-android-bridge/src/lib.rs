@@ -246,6 +246,7 @@ impl FreeholdTunnel {
                     StatusUpdate::PortChanged { port } => {
                         callback_clone.on_port_assigned(port);
                     }
+                    StatusUpdate::SubdomainAssigned(_) | StatusUpdate::AcmeCertReady => {}
                 }
             }
         });
@@ -265,6 +266,7 @@ impl FreeholdTunnel {
                 certs,
                 key,
                 auto_discover: self.config.auto_discover,
+                acme_cache_dir: None,
             },
             status_tx,
         )

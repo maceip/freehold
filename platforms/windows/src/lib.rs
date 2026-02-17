@@ -268,6 +268,12 @@ mod windows_impl {
                                 let _ =
                                     PostMessageW(Some(hwnd), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
                             }
+                            StatusUpdate::SubdomainAssigned(sub) => {
+                                info!("Subdomain assigned: {}", sub);
+                            }
+                            StatusUpdate::AcmeCertReady => {
+                                info!("ACME certificate ready");
+                            }
                         }
                     }
                 });

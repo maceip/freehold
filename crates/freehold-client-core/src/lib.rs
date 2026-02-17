@@ -25,12 +25,15 @@
 
 pub mod state;
 
+#[cfg(feature = "acme")]
+pub mod acme;
+
 use anyhow::Result;
-use freehold_api::{timing, Message, COOKIE_SIZE};
+use freehold_api::{timing, ConfirmAction, Message, COOKIE_SIZE};
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Instant;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "h3-proxy")]
@@ -190,15 +193,25 @@ pub enum StatusUpdate {
     PortChanged {
         port: u16,
     },
+    /// Subdomain assigned by relay (e.g. "a7xk2m.freehold.lit.app")
+    SubdomainAssigned(String),
+    /// ACME certificate obtained and hot-swapped
+    AcmeCertReady,
 }
 
-/// Command sent from UI to engine
+/// Command sent from UI/ACME task to engine
 #[derive(Debug, Clone)]
 pub enum EngineCommand {
     /// Request a new endpoint (change port)
     NewEndpoint,
     /// Shutdown the engine
     Shutdown,
+    /// Request DNS A + HTTPS record creation (send CreateRecords to relay)
+    RequestDns,
+    /// Set ACME DNS-01 TXT record (send SetTxt to relay)
+    SetAcmeTxt(Vec<u8>),
+    /// Clear ACME DNS-01 TXT record (send ClearTxt to relay)
+    ClearAcmeTxt,
 }
 
 /// Relay connection tracking
@@ -224,6 +237,10 @@ pub struct Engine {
     auto_discover: bool,
     bytes_sent: u64,
     bytes_received: u64,
+    /// Watch channel for notifying ACME task of subdomain assignment
+    subdomain_tx: watch::Sender<Option<String>>,
+    /// Track last notified subdomain to avoid duplicate notifications
+    last_subdomain: Option<String>,
 }
 
 impl Engine {
@@ -278,6 +295,7 @@ impl Engine {
         status_tx: mpsc::Sender<StatusUpdate>,
         msg_rx: Option<mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>>,
     ) -> Self {
+        let (subdomain_tx, _) = watch::channel(None);
         Self {
             socket,
             port,
@@ -295,7 +313,14 @@ impl Engine {
             auto_discover,
             bytes_sent: 0,
             bytes_received: 0,
+            subdomain_tx,
+            last_subdomain: None,
         }
+    }
+
+    /// Get a watch receiver for subdomain assignments (used by ACME task)
+    pub fn subdomain_rx(&self) -> watch::Receiver<Option<String>> {
+        self.subdomain_tx.subscribe()
     }
 
     /// Create a new engine with command channel
@@ -344,6 +369,30 @@ impl Engine {
                     EngineCommand::Shutdown => {
                         info!("Engine shutdown requested");
                         return Ok(());
+                    }
+                    EngineCommand::RequestDns => {
+                        if let Some(idx) = self.relays.iter().position(|r| r.state == RelayState::Connected) {
+                            info!("Sending CreateRecords to relay");
+                            self.send_confirm(idx, ConfirmAction::CreateRecords);
+                        } else {
+                            warn!("RequestDns: no connected relay");
+                        }
+                    }
+                    EngineCommand::SetAcmeTxt(data) => {
+                        if let Some(idx) = self.relays.iter().position(|r| r.state == RelayState::Connected) {
+                            info!("Sending SetTxt to relay");
+                            self.send_confirm(idx, ConfirmAction::SetTxt(data));
+                        } else {
+                            warn!("SetAcmeTxt: no connected relay");
+                        }
+                    }
+                    EngineCommand::ClearAcmeTxt => {
+                        if let Some(idx) = self.relays.iter().position(|r| r.state == RelayState::Connected) {
+                            info!("Sending ClearTxt to relay");
+                            self.send_confirm(idx, ConfirmAction::ClearTxt);
+                        } else {
+                            warn!("ClearAcmeTxt: no connected relay");
+                        }
                     }
                 }
             }
@@ -450,12 +499,12 @@ impl Engine {
         }
     }
 
-    fn send_confirm(&mut self, idx: usize) {
+    fn send_confirm(&mut self, idx: usize, action: ConfirmAction) {
         if let Some(cookie) = self.relays[idx].cookie {
             let msg = Message::Confirm {
                 port: self.port,
                 cookie,
-                action: freehold_api::ConfirmAction::None,
+                action,
             };
             let data = msg.to_bytes();
             let addr = self.relays[idx].addr;
@@ -498,12 +547,18 @@ impl Engine {
                 self.relays[idx].cookie = Some(cookie);
                 self.relays[idx].state = RelayState::Pending;
                 info!("CHALLENGE from {}", from);
-                self.send_confirm(idx);
+                self.send_confirm(idx, ConfirmAction::None);
             }
 
             Message::Neighbors { addrs, subdomain } => {
-                if subdomain.is_some() {
-                    self.relays[idx].subdomain = subdomain;
+                if let Some(ref sub) = subdomain {
+                    self.relays[idx].subdomain = subdomain.clone();
+                    // Notify if this is a new subdomain
+                    if self.last_subdomain.as_ref() != Some(sub) {
+                        self.last_subdomain = Some(sub.clone());
+                        let _ = self.subdomain_tx.send(Some(sub.clone()));
+                        let _ = self.status_tx.try_send(StatusUpdate::SubdomainAssigned(sub.clone()));
+                    }
                 }
                 if self.relays[idx].state == RelayState::Pending {
                     self.relays[idx].state = RelayState::Connected;
@@ -595,6 +650,9 @@ pub struct ServiceConfig {
     pub key: PrivateKeyDer<'static>,
     /// Auto-discover and register with neighbor relays.
     pub auto_discover: bool,
+    /// ACME cert cache directory. When Some, spawns ACME task for automatic
+    /// Let's Encrypt certificates. When None, uses self-signed only.
+    pub acme_cache_dir: Option<std::path::PathBuf>,
 }
 
 /// A complete Freehold service: registration + H3 proxy on a shared socket.
@@ -652,17 +710,43 @@ impl Service {
             local_addr, self.config.backend
         );
 
-        // 4. Create Engine in demux mode (sends via cloned FD, receives via channel)
+        // 4. Create command channel for ACME -> Engine communication
+        let (cmd_tx, cmd_rx) = mpsc::channel::<EngineCommand>(16);
+
+        // 5. Create Engine in demux mode (sends via cloned FD, receives via channel)
         let mut engine = Engine::new_demuxed(
             engine_send_socket,
             self.config.relay,
             self.config.relay_port,
             self.config.auto_discover,
-            self.status_tx,
+            self.status_tx.clone(),
             freehold_rx,
         );
+        engine.set_command_rx(cmd_rx);
 
-        // 5. Run Engine + H3 accept loop concurrently
+        // 6. Spawn ACME task if cache dir is configured
+        #[cfg(feature = "acme")]
+        if let Some(cache_dir) = self.config.acme_cache_dir {
+            let subdomain_rx = engine.subdomain_rx();
+            let acme_endpoint = endpoint.clone();
+            let status_tx = self.status_tx.clone();
+
+            tokio::spawn(async move {
+                if let Err(e) = run_acme_task(
+                    cache_dir,
+                    cmd_tx,
+                    subdomain_rx,
+                    acme_endpoint,
+                    status_tx,
+                )
+                .await
+                {
+                    warn!("ACME task failed: {:?}", e);
+                }
+            });
+        }
+
+        // 7. Run Engine + H3 accept loop concurrently
         let proxy_shutdown = shutdown.clone();
         let backend = self.config.backend;
 
@@ -677,6 +761,60 @@ impl Service {
             }
         }
     }
+}
+
+/// ACME background task: waits for subdomain, obtains cert, hot-swaps into endpoint.
+#[cfg(feature = "acme")]
+async fn run_acme_task(
+    cache_dir: std::path::PathBuf,
+    cmd_tx: mpsc::Sender<EngineCommand>,
+    mut subdomain_rx: watch::Receiver<Option<String>>,
+    endpoint: quinn::Endpoint,
+    status_tx: mpsc::Sender<StatusUpdate>,
+) -> Result<()> {
+    use std::sync::Arc;
+
+    // Wait for subdomain assignment
+    loop {
+        subdomain_rx.changed().await.context("subdomain channel closed")?;
+        if subdomain_rx.borrow().is_some() {
+            break;
+        }
+    }
+    let fqdn = subdomain_rx.borrow().clone().unwrap();
+    info!("ACME: subdomain assigned: {}", fqdn);
+
+    let mgr = acme::AcmeManager::new(cache_dir, cmd_tx.clone());
+
+    // Check disk cache first
+    if let Some((certs, key)) = mgr.load_cached(&fqdn) {
+        let server_config = make_quinn_server_config(certs, key)?;
+        endpoint.set_server_config(Some(server_config));
+        info!("ACME: hot-swapped cached cert for {}", fqdn);
+        let _ = status_tx.try_send(StatusUpdate::AcmeCertReady);
+        return Ok(());
+    }
+
+    // Request DNS records from relay
+    cmd_tx
+        .send(EngineCommand::RequestDns)
+        .await
+        .context("send RequestDns")?;
+
+    // Wait for DNS propagation
+    info!("ACME: waiting 5s for DNS A/HTTPS records...");
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // Run ACME flow
+    let (certs, key) = mgr.obtain(&fqdn).await?;
+
+    // Hot-swap cert into Quinn endpoint
+    let server_config = make_quinn_server_config(certs, key)?;
+    endpoint.set_server_config(Some(server_config));
+    info!("ACME: hot-swapped new cert for {}", fqdn);
+    let _ = status_tx.try_send(StatusUpdate::AcmeCertReady);
+
+    Ok(())
 }
 
 /// Helper to generate a self-signed cert and create a service.
@@ -701,6 +839,7 @@ pub fn create_service_with_self_signed_cert(
             certs,
             key,
             auto_discover,
+            acme_cache_dir: None,
         },
         status_tx,
     )

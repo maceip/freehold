@@ -92,6 +92,8 @@ pub enum ConfirmAction {
     SetTxt(Vec<u8>),
     /// Clear the TXT record
     ClearTxt,
+    /// Request DNS A + HTTPS record creation (deferred until reachability proven)
+    CreateRecords,
 }
 
 /// Maximum length of ACME challenge token data
@@ -209,6 +211,16 @@ impl Message {
                                     }
                                     ConfirmAction::ClearTxt
                                 }
+                                0x03 => {
+                                    // CreateRecords: action + len (len must be 0)
+                                    if data.len() < 4 + COOKIE_SIZE + 2 {
+                                        return Err(ProtocolError::TooShort {
+                                            expected: 4 + COOKIE_SIZE + 2,
+                                            actual: data.len(),
+                                        });
+                                    }
+                                    ConfirmAction::CreateRecords
+                                }
                                 _ => ConfirmAction::None,
                             }
                         } else {
@@ -304,6 +316,10 @@ impl Message {
                     }
                     ConfirmAction::ClearTxt => {
                         buf.push(0x02);
+                        buf.push(0x00);
+                    }
+                    ConfirmAction::CreateRecords => {
+                        buf.push(0x03);
                         buf.push(0x00);
                     }
                 }
@@ -769,8 +785,6 @@ mod tests {
         let parsed = Message::parse(&bytes).unwrap();
         assert!(matches!(parsed, Message::Register { port: 443 }));
     }
-}
-
 
     // ==================== Confirm Action Tests ====================
 
@@ -896,6 +910,43 @@ mod tests {
         assert_eq!(bytes[3], 4); // sub_len
         assert_eq!(&bytes[4..8], b"test");
     }
+
+    // ==================== CreateRecords Tests ====================
+
+    #[test]
+    fn roundtrip_confirm_with_create_records() {
+        let cookie = [0xAB; COOKIE_SIZE];
+        let msg = Message::Confirm {
+            port: 443,
+            cookie,
+            action: ConfirmAction::CreateRecords,
+        };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        match parsed {
+            Message::Confirm { port, cookie: c, action: ConfirmAction::CreateRecords } => {
+                assert_eq!(port, 443);
+                assert_eq!(c, cookie);
+            }
+            _ => panic!("Expected Confirm with CreateRecords"),
+        }
+    }
+
+    #[test]
+    fn confirm_create_records_wire_format() {
+        let cookie = [0x00; COOKIE_SIZE];
+        let msg = Message::Confirm {
+            port: 80,
+            cookie,
+            action: ConfirmAction::CreateRecords,
+        };
+        let bytes = msg.to_bytes();
+        // Base: 20, action: 1, len: 1 = total 22
+        assert_eq!(bytes.len(), 22);
+        assert_eq!(bytes[20], 0x03); // action byte
+        assert_eq!(bytes[21], 0x00); // length = 0
+    }
+}
 
 /// Property-based tests using proptest
 #[cfg(test)]

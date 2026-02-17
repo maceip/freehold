@@ -387,6 +387,7 @@ async fn run_with_h3_proxy(
                 certs,
                 key,
                 auto_discover: args.discover,
+                acme_cache_dir: None,
             },
             status_tx,
         )
@@ -422,6 +423,12 @@ async fn run_with_h3_proxy(
                 }
                 StatusUpdate::PortChanged { port } => {
                     info!("Port changed to {}", port);
+                }
+                StatusUpdate::SubdomainAssigned(sub) => {
+                    info!("Subdomain assigned: {}", sub);
+                }
+                StatusUpdate::AcmeCertReady => {
+                    info!("ACME certificate ready");
                 }
             }
         }

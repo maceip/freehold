@@ -59,6 +59,12 @@ mod linux_impl {
                         info!("Port changed to {}", port);
                         STORED_PORT.store(port, Ordering::Relaxed);
                     }
+                    StatusUpdate::SubdomainAssigned(sub) => {
+                        info!("Subdomain assigned: {}", sub);
+                    }
+                    StatusUpdate::AcmeCertReady => {
+                        info!("ACME certificate ready");
+                    }
                 }
             }
         });

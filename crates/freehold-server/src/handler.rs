@@ -185,17 +185,25 @@ pub trait MessageHandler {
         // Compute subdomain
         let subdomain = self.context().cookie_auth.subdomain(from_ip, port);
 
-        // Set DNS registration records (A + HTTPS)
-        if let Some(ref dns) = self.context().dns_manager {
-            if let Some(primary_ip) = self.context().primary_ip {
-                if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
-                    warn!("DNS registration failed for {}: {}", subdomain, e);
+        // Handle ACME / DNS actions
+        match action {
+            ConfirmAction::CreateRecords => {
+                // Reachability check: port must already exist in eBPF map.
+                // This proves the client completed a prior registration cycle,
+                // has been heartbeating, and the relay can forward traffic to it.
+                if !self.is_registered(from_ip, port) {
+                    warn!("CreateRecords rejected for {}:{} — not registered", from_ip, port);
+                    return Message::Error { port }.into();
+                }
+                if let Some(ref dns) = self.context().dns_manager {
+                    if let Some(primary_ip) = self.context().primary_ip {
+                        if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
+                            warn!("DNS registration failed for {}: {}", subdomain, e);
+                            return Message::Error { port }.into();
+                        }
+                    }
                 }
             }
-        }
-
-        // Handle ACME actions
-        match action {
             ConfirmAction::SetTxt(data) => {
                 if let Some(ref dns) = self.context().dns_manager {
                     if !self.context().txt_rate.check(port) {

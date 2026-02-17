@@ -220,6 +220,12 @@ mod macos_impl {
                             info!("Port changed to {}", port);
                             CURRENT_PORT.store(port, Ordering::Relaxed);
                         }
+                        StatusUpdate::SubdomainAssigned(sub) => {
+                            info!("Subdomain assigned: {}", sub);
+                        }
+                        StatusUpdate::AcmeCertReady => {
+                            info!("ACME certificate ready");
+                        }
                     }
                 }
             });

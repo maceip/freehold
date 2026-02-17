@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use freehold_client_core::Engine;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -16,7 +16,10 @@ async fn main() -> Result<()> {
     let (status_tx, status_rx) = mpsc::channel(100);
 
     // Default relay address (TODO: make configurable)
-    let default_relay: SocketAddr = "127.0.0.1:7878".parse()?;
+    let default_relay: SocketAddr = "freehold.lit.app:9999"
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("failed to resolve freehold.lit.app"))?;
     let default_port = 8080;
     let auto_discover = true;
 
