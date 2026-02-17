@@ -1,7 +1,13 @@
 //! Freehold Client Core - The headless "Engine"
 //!
-//! Handles registration, heartbeat, neighbor discovery, and H3 proxy.
+//! Handles registration, heartbeat, neighbor discovery, H3 proxy, and
+//! automatic ACME certificate management with dual-path DNS.
 //! Platform-specific UI crates call into this.
+//!
+//! When `acme` feature + `dns_zone` are set, the ACME task constructs
+//! three FQDNs from the relay-assigned subdomain hash and obtains a
+//! multi-SAN TLS certificate covering the primary, `.relay`, and `.home`
+//! subdomains.
 //!
 //! # Architecture
 //!
@@ -666,6 +672,9 @@ pub struct ServiceConfig {
     /// ACME cert cache directory. When Some, spawns ACME task for automatic
     /// Let's Encrypt certificates. When None, uses self-signed only.
     pub acme_cache_dir: Option<std::path::PathBuf>,
+    /// DNS zone for constructing FQDNs from the subdomain hash
+    /// (e.g. "freehold.lit.app"). Required when `acme_cache_dir` is set.
+    pub dns_zone: Option<String>,
 }
 
 /// A complete Freehold service: registration + H3 proxy on a shared socket.
@@ -739,16 +748,20 @@ impl Service {
         );
         engine.set_command_rx(cmd_rx);
 
-        // 6. Spawn ACME task if cache dir is configured
+        // 6. Spawn ACME task if cache dir and dns_zone are configured
         #[cfg(feature = "acme")]
-        if let Some(cache_dir) = self.config.acme_cache_dir {
+        if let (Some(cache_dir), Some(dns_zone)) =
+            (self.config.acme_cache_dir, self.config.dns_zone)
+        {
             let subdomain_rx = engine.subdomain_rx();
             let acme_endpoint = endpoint.clone();
             let status_tx = self.status_tx.clone();
 
             tokio::spawn(async move {
-                if let Err(e) =
-                    run_acme_task(cache_dir, cmd_tx, subdomain_rx, acme_endpoint, status_tx).await
+                if let Err(e) = run_acme_task(
+                    cache_dir, dns_zone, cmd_tx, subdomain_rx, acme_endpoint, status_tx,
+                )
+                .await
                 {
                     warn!("ACME task failed: {:?}", e);
                 }
@@ -776,6 +789,7 @@ impl Service {
 #[cfg(feature = "acme")]
 async fn run_acme_task(
     cache_dir: std::path::PathBuf,
+    dns_zone: String,
     cmd_tx: mpsc::Sender<EngineCommand>,
     mut subdomain_rx: watch::Receiver<Option<String>>,
     endpoint: quinn::Endpoint,
@@ -783,7 +797,7 @@ async fn run_acme_task(
 ) -> Result<()> {
     use anyhow::Context as _;
 
-    // Wait for subdomain assignment
+    // Wait for subdomain assignment (receives the 12-char hash)
     loop {
         subdomain_rx
             .changed()
@@ -793,16 +807,23 @@ async fn run_acme_task(
             break;
         }
     }
-    let fqdn = subdomain_rx.borrow().clone().unwrap();
-    info!("ACME: subdomain assigned: {}", fqdn);
+    let hash = subdomain_rx.borrow().clone().unwrap();
+    info!("ACME: subdomain hash assigned: {}", hash);
+
+    // Construct all three FQDNs from the hash
+    let primary = format!("{}.{}", hash, dns_zone);
+    let relay = format!("{}.relay.{}", hash, dns_zone);
+    let home = format!("{}.home.{}", hash, dns_zone);
+    let domains = vec![primary.clone(), relay, home];
+    info!("ACME: domains: {:?}", domains);
 
     let mgr = acme::AcmeManager::new(cache_dir, cmd_tx.clone());
 
-    // Check disk cache first
-    if let Some((certs, key)) = mgr.load_cached(&fqdn) {
+    // Check disk cache first (keyed on primary domain)
+    if let Some((certs, key)) = mgr.load_cached(&primary) {
         let server_config = make_quinn_server_config(certs, key)?;
         endpoint.set_server_config(Some(server_config));
-        info!("ACME: hot-swapped cached cert for {}", fqdn);
+        info!("ACME: hot-swapped cached cert for {}", primary);
         let _ = status_tx.try_send(StatusUpdate::AcmeCertReady);
         return Ok(());
     }
@@ -817,13 +838,13 @@ async fn run_acme_task(
     info!("ACME: waiting 5s for DNS A/HTTPS records...");
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-    // Run ACME flow
-    let (certs, key) = mgr.obtain(&fqdn).await?;
+    // Run ACME flow with all three domains
+    let (certs, key) = mgr.obtain(&domains).await?;
 
     // Hot-swap cert into Quinn endpoint
     let server_config = make_quinn_server_config(certs, key)?;
     endpoint.set_server_config(Some(server_config));
-    info!("ACME: hot-swapped new cert for {}", fqdn);
+    info!("ACME: hot-swapped new cert for {:?}", domains);
     let _ = status_tx.try_send(StatusUpdate::AcmeCertReady);
 
     Ok(())
@@ -852,6 +873,7 @@ pub fn create_service_with_self_signed_cert(
             key,
             auto_discover,
             acme_cache_dir: None,
+            dns_zone: None,
         },
         status_tx,
     )

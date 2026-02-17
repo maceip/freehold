@@ -155,24 +155,35 @@ impl Server {
                 match action {
                     freehold_api::ConfirmAction::CreateRecords => {
                         // Reachability check: port must already exist in eBPF map
-                        let is_registered = match self.registrations.read().await.get(&port, 0) {
+                        let reg_data = match self.registrations.read().await.get(&port, 0) {
                             Ok(reg) => {
                                 let reg_ip = Ipv4Addr::from(u32::from_be(reg.home_ip));
-                                reg_ip == ip
+                                if reg_ip == ip {
+                                    Some(reg)
+                                } else {
+                                    None
+                                }
                             }
-                            Err(_) => false,
+                            Err(_) => None,
                         };
-                        if !is_registered {
-                            warn!(
-                                "CreateRecords rejected for {}:{} — not registered",
-                                ip, port
-                            );
-                            socket.send_to(&Message::Error { port }.to_bytes(), from)?;
-                            return Ok(());
-                        }
+                        let reg_data = match reg_data {
+                            Some(r) => r,
+                            None => {
+                                warn!(
+                                    "CreateRecords rejected for {}:{} — not registered",
+                                    ip, port
+                                );
+                                socket.send_to(&Message::Error { port }.to_bytes(), from)?;
+                                return Ok(());
+                            }
+                        };
                         if let Some(ref dns) = self.dns_manager {
                             if let Some(primary_ip) = self.primary_ip {
-                                if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
+                                let home_ip = Ipv4Addr::from(u32::from_be(reg_data.home_ip));
+                                let home_port = reg_data.home_port;
+                                if let Err(e) = dns.set_registration(
+                                    &subdomain, primary_ip, port, home_ip, home_port,
+                                ) {
                                     warn!("DNS registration failed for {}: {}", subdomain, e);
                                     socket.send_to(&Message::Error { port }.to_bytes(), from)?;
                                     return Ok(());

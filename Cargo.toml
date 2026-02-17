@@ -10,7 +10,6 @@ members = [
     "crates/freehold-h3-proxy",
     "crates/freehold-android-bridge",
     "crates/freehold-e2e-tests",
-    "crates/freehold-scute",
     # Examples
     "examples/heartbeat-ws",
 ]

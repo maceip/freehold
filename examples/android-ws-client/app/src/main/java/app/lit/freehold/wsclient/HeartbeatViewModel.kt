@@ -22,13 +22,43 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
+/**
+ * Connection path for dual-path DNS.
+ *
+ * The primary domain uses SVCB records that let the browser/client race
+ * both the relay and direct paths — whichever responds first wins.
+ * The explicit .relay and .home subdomains give SDK clients manual control.
+ */
+enum class ConnectionPath(val label: String, val description: String) {
+    /** Primary FQDN — SVCB racing (relay + direct). Best for most clients. */
+    PRIMARY("Auto (SVCB)", "Races relay + direct, picks fastest"),
+    /** Explicit relay path — always routes through the relay. */
+    RELAY("Relay", "Always via relay (works behind any NAT)"),
+    /** Explicit direct/home path — lowest latency if NAT allows it. */
+    HOME("Direct", "Direct to server (permissive NAT only)"),
+}
+
 data class UiState(
-    val url: String = "https://SUBDOMAIN.freehold.lit.app:PORT/ws",
+    val subdomain: String = "",
+    val port: String = "8443",
+    val path: ConnectionPath = ConnectionPath.PRIMARY,
     val connected: Boolean = false,
     val connecting: Boolean = false,
     val error: String? = null,
     val messages: List<String> = emptyList(),
-)
+) {
+    /** Build the WebSocket URL from subdomain, port, and connection path. */
+    val url: String
+        get() {
+            if (subdomain.isBlank()) return ""
+            val host = when (path) {
+                ConnectionPath.PRIMARY -> "$subdomain.freehold.lit.app"
+                ConnectionPath.RELAY   -> "$subdomain.relay.freehold.lit.app"
+                ConnectionPath.HOME    -> "$subdomain.home.freehold.lit.app"
+            }
+            return "https://$host:$port/ws"
+        }
+}
 
 class HeartbeatViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -66,8 +96,16 @@ class HeartbeatViewModel(app: Application) : AndroidViewModel(app) {
             .build()
     }
 
-    fun setUrl(url: String) {
-        _uiState.update { it.copy(url = url) }
+    fun setSubdomain(subdomain: String) {
+        _uiState.update { it.copy(subdomain = subdomain) }
+    }
+
+    fun setPort(port: String) {
+        _uiState.update { it.copy(port = port) }
+    }
+
+    fun setPath(path: ConnectionPath) {
+        _uiState.update { it.copy(path = path) }
     }
 
     fun connect() {
@@ -77,10 +115,12 @@ class HeartbeatViewModel(app: Application) : AndroidViewModel(app) {
         wsJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 // Convert https:// -> wss:// for WebSocket
-                val wsUrl = _uiState.value.url
+                val currentState = _uiState.value
+                val wsUrl = currentState.url
                     .replaceFirst("https://", "wss://")
                     .replaceFirst("http://", "ws://")
 
+                log("Path: ${currentState.path.label} (${currentState.path.description})")
                 log("Connecting to $wsUrl ...")
 
                 val request = Request.Builder()

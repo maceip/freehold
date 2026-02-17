@@ -7,6 +7,10 @@
 //! - The real server to implement the same trait
 //! - Shared protocol logic without code duplication
 //!
+//! The `CreateRecords` action triggers dual-path DNS registration via
+//! [`DnsManager::set_registration`](crate::dns::DnsManager::set_registration),
+//! creating SVCB records for both relay and home (direct) paths.
+//!
 //! # Example
 //!
 //! ```rust,ignore
@@ -126,6 +130,20 @@ pub trait MessageHandler {
     /// Storage-specific implementation required.
     fn is_registered(&self, ip: Ipv4Addr, port: u16) -> bool;
 
+    /// Get the home address (IP + source port) for a registered port.
+    ///
+    /// The real eBPF implementation reads `home_ip` / `home_port` from the
+    /// Registration struct in the eBPF map. The default returns `(ip, port)`
+    /// which is correct for tests where client IP == home IP and the relay
+    /// port == the home port.
+    fn get_home_addr(&self, ip: Ipv4Addr, port: u16) -> Option<(Ipv4Addr, u16)> {
+        if self.is_registered(ip, port) {
+            Some((ip, port))
+        } else {
+            None
+        }
+    }
+
     /// Register a port for the given IP.
     /// Called after successful cookie verification.
     /// Storage-specific implementation required.
@@ -195,16 +213,22 @@ pub trait MessageHandler {
                 // Reachability check: port must already exist in eBPF map.
                 // This proves the client completed a prior registration cycle,
                 // has been heartbeating, and the relay can forward traffic to it.
-                if !self.is_registered(from_ip, port) {
-                    warn!(
-                        "CreateRecords rejected for {}:{} — not registered",
-                        from_ip, port
-                    );
-                    return Message::Error { port }.into();
-                }
+                let home_addr = match self.get_home_addr(from_ip, port) {
+                    Some(addr) => addr,
+                    None => {
+                        warn!(
+                            "CreateRecords rejected for {}:{} — not registered",
+                            from_ip, port
+                        );
+                        return Message::Error { port }.into();
+                    }
+                };
                 if let Some(ref dns) = self.context().dns_manager {
                     if let Some(primary_ip) = self.context().primary_ip {
-                        if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
+                        let (home_ip, home_port) = home_addr;
+                        if let Err(e) = dns.set_registration(
+                            &subdomain, primary_ip, port, home_ip, home_port,
+                        ) {
                             warn!("DNS registration failed for {}: {}", subdomain, e);
                             return Message::Error { port }.into();
                         }

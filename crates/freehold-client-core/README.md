@@ -79,7 +79,8 @@ let service = Service::new(ServiceConfig {
     certs,
     key,
     auto_discover: true,
-    acme_cache_dir: None, // Some(path) to enable automatic ACME certs
+    acme_cache_dir: None,  // Some(path) to enable automatic ACME certs
+    dns_zone: None,        // Some("freehold.lit.app") for ACME multi-SAN certs
 }, status_tx)?;
 
 service.run(shutdown_rx).await?;
@@ -131,12 +132,17 @@ and renew Let's Encrypt certificates:
 freehold-client-core = { version = "1.0", features = ["h3-proxy", "acme"] }
 ```
 
-The ACME task runs in the background:
-1. Waits for subdomain assignment from the relay
-2. Checks disk cache for a valid cert — if found, hot-swaps immediately
-3. Sends `CreateRecords` to create DNS A + HTTPS records
-4. Runs DNS-01 flow (`SetAcmeTxt` → validate → `ClearAcmeTxt`)
-5. Hot-swaps the cert into the running QUIC endpoint (zero downtime)
+Set both `acme_cache_dir` and `dns_zone` to enable. The ACME task runs in the background:
+1. Waits for subdomain hash assignment from the relay
+2. Constructs three FQDNs: `{hash}.{zone}`, `{hash}.relay.{zone}`, `{hash}.home.{zone}`
+3. Checks disk cache for a valid cert — if found, hot-swaps immediately
+4. Sends `CreateRecords` to create dual-path DNS records (SVCB for relay + home)
+5. Runs DNS-01 flow sequentially per authorization (each domain has its own challenge token)
+6. Hot-swaps the multi-SAN cert into the running QUIC endpoint (zero downtime)
+
+The three FQDNs enable dual-path connectivity: SVCB-aware browsers race the relay
+and direct paths on the primary domain, while SDK clients can use `.relay` or `.home`
+for explicit control.
 
 Monitor via `StatusUpdate::SubdomainAssigned` and `StatusUpdate::AcmeCertReady`.
 

@@ -388,6 +388,7 @@ async fn run_with_h3_proxy(
                 key,
                 auto_discover: args.discover,
                 acme_cache_dir: None,
+                dns_zone: None,
             },
             status_tx,
         )

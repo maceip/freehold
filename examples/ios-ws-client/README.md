@@ -69,6 +69,21 @@ The Rust crate exports these C functions (auto-generated header):
 | `ws_client_free_message()` | Free received message |
 | `ws_client_free_string()` | Free error string |
 
+## Dual-path DNS
+
+The app includes a **path selector** (Auto / Relay / Direct) that
+demonstrates Freehold's dual-path DNS:
+
+| Path | FQDN | Behavior |
+|------|------|----------|
+| Auto (SVCB) | `<hash>.freehold.lit.app` | Races relay + direct, picks fastest |
+| Relay | `<hash>.relay.freehold.lit.app` | Always via relay (works behind any NAT) |
+| Direct | `<hash>.home.freehold.lit.app` | Direct to server (permissive NAT only) |
+
+Enter just the subdomain hash (e.g. `a7xk2m`) and the app constructs
+the full FQDN based on the selected path. Use "Auto" for production —
+it races both paths and picks whichever responds first.
+
 ## Why Rust for the network layer?
 
 iOS's URLSession supports HTTP/3, but does not expose Extended CONNECT

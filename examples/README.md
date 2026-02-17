@@ -56,22 +56,44 @@ byte `0x46` (ASCII "F" for Freehold).
 
 ### What about TLS certificates?
 
-When Bob registers, the relay computes an HMAC-derived subdomain —
-something like `a7xk2m.freehold.lit.app` — and returns it in the
-Neighbors response. DNS records are **not** created yet.
+When Bob registers, the relay computes an HMAC-derived subdomain hash —
+something like `a7xk2m` — and returns it in the Neighbors response.
+DNS records are **not** created yet.
 
 To get a real TLS certificate, Bob's client:
 1. Sends `CreateRecords` — the relay checks that Bob is actually
-   reachable (eBPF map lookup), then creates DNS A + HTTPS records
-2. Sends `SetAcmeTxt` with the ACME challenge token — the relay sets
-   `_acme-challenge.<subdomain>` TXT record
-3. Let's Encrypt validates the domain
-4. Sends `ClearAcmeTxt` to clean up
-5. Hot-swaps the new cert into the running QUIC endpoint (zero downtime)
+   reachable (eBPF map lookup), then creates **dual-path DNS records**:
+   - `a7xk2m.freehold.lit.app` A → relay IP (fallback)
+   - `a7xk2m.freehold.lit.app` HTTPS → relay endpoint (SVCB)
+   - `a7xk2m.freehold.lit.app` HTTPS → home/direct endpoint (SVCB)
+   - `a7xk2m.relay.freehold.lit.app` A + HTTPS → relay only
+   - `a7xk2m.home.freehold.lit.app` A + HTTPS → home/direct only
+2. Runs ACME DNS-01 for all three domain names (multi-SAN certificate)
+3. Hot-swaps the new cert into the running QUIC endpoint (zero downtime)
 
 When `acme_cache_dir` is set, this all happens automatically in the
 background. On restart, cached certs load in milliseconds — no round-trip
 to Let's Encrypt unless the cert is expiring.
+
+### Dual-path DNS: how SVCB racing works
+
+SVCB-aware browsers (Chrome, Edge) see two HTTPS records on the primary
+domain — one pointing to the relay, one pointing directly to Bob's home
+IP. The browser **races** both connections and uses whichever responds
+first. This means:
+
+- If Bob is behind permissive NAT (or has a public IP), the browser
+  connects directly — zero relay involvement, lowest latency.
+- If Bob is behind CGNAT or restrictive NAT, the direct path fails
+  silently and the relay path wins. The relay's Punch message opens
+  the NAT hole, and QUIC retransmission covers the delay.
+- Legacy browsers that don't support SVCB fall back to the A record
+  (relay IP), which always works.
+
+SDK clients that want explicit control can connect to
+`a7xk2m.relay.freehold.lit.app` (always via relay) or
+`a7xk2m.home.freehold.lit.app` (direct to Bob). This is useful for
+testing, debugging, or when you know the NAT situation.
 
 Clients connect using the subdomain (`https://a7xk2m.freehold.lit.app:8443`),
 which gives them correct TLS SNI matching. No certificate warnings.
@@ -141,18 +163,27 @@ Extended CONNECT (RFC 9220) into a plain HTTP/1.1 WebSocket upgrade.
 # Local mode (no relay, self-signed cert)
 cargo run -p heartbeat-ws -- --port 8443
 
-# With relay
+# With relay (self-signed cert)
 cargo run -p heartbeat-ws -- --relay freehold.lit.app:9999 --relay-port 55126
+
+# With relay + automatic ACME TLS (dual-path DNS, real cert)
+cargo run -p heartbeat-ws -- \
+  --relay freehold.lit.app:9999 --relay-port 55126 \
+  --acme-cache /tmp/acme-cache
 ```
 
-Uses `Service` internally — a single UDP socket shared between Engine
-and Quinn via `DemuxSocket`. Zero mux code needed.
+With `--acme-cache`, the server automatically creates dual-path DNS
+records and obtains a multi-SAN Let's Encrypt certificate. Uses `Service`
+internally — a single UDP socket shared between Engine and Quinn via
+`DemuxSocket`. Zero mux code needed.
 
 ### `ios-ws-client` — iOS QUIC/H3 WebSocket client (Rust + SwiftUI)
 
 An iPhone app that connects to heartbeat-ws through Freehold. Networking
 is in Rust (quinn + h3 for full QUIC/HTTP3 control), UI is SwiftUI,
-bridged via C FFI (cbindgen).
+bridged via C FFI (cbindgen). Includes a **path selector** (Auto / Relay /
+Direct) to demonstrate dual-path DNS — enter just the subdomain hash and
+pick which path to test.
 
 ```sh
 cd examples/ios-ws-client
@@ -166,7 +197,9 @@ Extended CONNECT for WebSocket-over-H3. Quinn does.
 ### `android-ws-client` — Android Cronet HTTP/3 WebSocket client
 
 A Compose app that connects to heartbeat-ws through Freehold using
-Cronet's native QUIC stack + OkHttp for WebSocket framing.
+Cronet's native QUIC stack + OkHttp for WebSocket framing. Includes a
+**path selector** (Auto / Relay / Direct) to test dual-path DNS — enter
+the subdomain hash, pick a connection path, and watch the message log.
 
 ```sh
 cd examples/android-ws-client
@@ -183,7 +216,8 @@ code — Freehold just sits in front of `next dev`.
 cd examples/nextjs-app
 npm install
 npm run freehold:local   # local mode (self-signed, localhost)
-npm run freehold         # with relay (public internet)
+npm run freehold         # with relay (public internet, self-signed)
+npm run freehold:acme    # with relay + ACME TLS (dual-path DNS, real cert)
 ```
 
 ### `python-backend` — Flask API backend
@@ -196,6 +230,8 @@ cd examples/python-backend
 pip install -r requirements.txt
 ./run.sh                                                   # local
 ./run.sh --relay freehold.lit.app:9999 --relay-port 55126  # with relay
+./run.sh --relay freehold.lit.app:9999 --relay-port 55126 \
+         --acme-cache /tmp/acme                            # with relay + ACME
 ```
 
 ---
@@ -297,7 +333,10 @@ Bob → Relay:  [0x46, 0x03, 0x20, 0xFB, cookie..., 0x03, 0x00]
                magic  CONF  port 8443   cookie     CREATE len=0
 ```
 
-DNS records created: `a7xk2m.freehold.lit.app → relay IP, port 8443`
+DNS records created:
+- `a7xk2m.freehold.lit.app` → relay IP + SVCB (relay + home)
+- `a7xk2m.relay.freehold.lit.app` → relay path only
+- `a7xk2m.home.freehold.lit.app` → direct/home path only
 
 ### 6. Bob gets a real name tag (ACME)
 

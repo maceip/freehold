@@ -50,15 +50,54 @@ fun HeartbeatScreen(vm: HeartbeatViewModel = viewModel()) {
 
         Spacer(Modifier.height(8.dp))
 
-        // URL input
-        OutlinedTextField(
-            value = state.url,
-            onValueChange = vm::setUrl,
-            label = { Text("Server URL") },
-            placeholder = { Text("https://abc123.freehold.lit.app:55126/ws") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
+        // Subdomain + port input
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = state.subdomain,
+                onValueChange = vm::setSubdomain,
+                label = { Text("Subdomain hash") },
+                placeholder = { Text("a7xk2m") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = state.port,
+                onValueChange = vm::setPort,
+                label = { Text("Port") },
+                placeholder = { Text("8443") },
+                modifier = Modifier.width(96.dp),
+                singleLine = true,
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        // Connection path selector (dual-path DNS)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Path:", fontSize = 14.sp)
+            ConnectionPath.entries.forEach { path ->
+                FilterChip(
+                    selected = state.path == path,
+                    onClick = { vm.setPath(path) },
+                    label = { Text(path.label, fontSize = 12.sp) },
+                )
+            }
+        }
+
+        // Show resolved URL
+        if (state.url.isNotBlank()) {
+            Text(
+                state.url,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
 
         Spacer(Modifier.height(8.dp))
 
@@ -71,6 +110,7 @@ fun HeartbeatScreen(vm: HeartbeatViewModel = viewModel()) {
                 onClick = {
                     if (state.connected) vm.disconnect() else vm.connect()
                 },
+                enabled = state.subdomain.isNotBlank() || state.connected,
             ) {
                 Text(if (state.connected) "Disconnect" else "Connect")
             }

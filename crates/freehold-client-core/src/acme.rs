@@ -1,10 +1,17 @@
 //! ACME certificate management via DNS-01 challenge.
 //!
+//! Obtains a multi-SAN certificate covering three FQDNs per registration:
+//! - `{hash}.{zone}` — primary domain (SVCB-racing browsers use this)
+//! - `{hash}.relay.{zone}` — explicit relay path for SDK clients
+//! - `{hash}.home.{zone}` — explicit direct/home path for SDK clients
+//!
 //! The client drives the entire ACME flow:
-//! 1. Wait for subdomain assignment from relay
-//! 2. Check disk cache for a valid cert
-//! 3. If none/expired, request DNS records via Engine, then run ACME DNS-01
-//! 4. Hot-swap the cert into the running Quinn endpoint
+//! 1. Wait for subdomain hash assignment from relay
+//! 2. Construct three FQDNs from hash + dns_zone
+//! 3. Check disk cache for a valid cert
+//! 4. If none/expired, request DNS records via Engine, then run ACME DNS-01
+//!    sequentially per authorization (each has a unique challenge token)
+//! 5. Hot-swap the cert into the running Quinn endpoint
 
 use std::path::PathBuf;
 
@@ -74,74 +81,100 @@ impl AcmeManager {
         Some((certs, key))
     }
 
-    /// Run the full ACME DNS-01 flow to obtain a certificate.
+    /// Run the full ACME DNS-01 flow to obtain a multi-SAN certificate.
+    ///
+    /// `domains` should contain all FQDNs to include as SANs (e.g. primary,
+    /// relay, and home subdomains). The relay sets TXT records for all names
+    /// from a single `SetAcmeTxt` action.
     pub async fn obtain(
         &self,
-        domain: &str,
+        domains: &[String],
     ) -> Result<(
         Vec<rustls::pki_types::CertificateDer<'static>>,
         rustls::pki_types::PrivateKeyDer<'static>,
     )> {
-        info!("Starting ACME DNS-01 flow for {}", domain);
+        info!("Starting ACME DNS-01 flow for {:?}", domains);
 
         // 1. Create/load account
         let account = self.get_or_create_account().await?;
 
-        // 2. Create new order
-        let identifier = Identifier::Dns(domain.to_string());
+        // 2. Create new order with all identifiers
+        let identifiers: Vec<Identifier> = domains
+            .iter()
+            .map(|d| Identifier::Dns(d.clone()))
+            .collect();
         let mut order = account
             .new_order(&NewOrder {
-                identifiers: &[identifier],
+                identifiers: &identifiers,
             })
             .await
             .context("ACME new order")?;
 
-        // 3. Get authorizations and find DNS-01 challenge
+        // 3. Get authorizations and solve DNS-01 challenges.
+        //
+        //    Each authorization has its own challenge token, so dns_value
+        //    differs per domain. We solve them sequentially: for each
+        //    pending auth, set TXT → propagate → validate → next.
+        //    The relay's set_txt writes to all three _acme-challenge names,
+        //    but only one is checked per validation step, so this is correct.
         let authorizations = order.authorizations().await.context("get authorizations")?;
-        let auth = authorizations
-            .into_iter()
-            .next()
-            .context("no authorizations")?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
 
-        if !matches!(auth.status, AuthorizationStatus::Pending) {
-            debug!("Authorization already valid, skipping challenge");
-        }
-
-        let challenge = auth
-            .challenges
-            .iter()
-            .find(|c| c.r#type == ChallengeType::Dns01)
-            .context("no DNS-01 challenge")?;
-
-        let dns_value = order.key_authorization(challenge).dns_value();
-        debug!("DNS-01 challenge value: {}", dns_value);
-
-        // 4. Set TXT record via Engine
-        self.cmd_tx
-            .send(EngineCommand::SetAcmeTxt(dns_value.as_bytes().to_vec()))
-            .await
-            .context("send SetAcmeTxt command")?;
-
-        // 5. Wait for DNS propagation
-        info!("Waiting 10s for DNS propagation...");
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-
-        // 6. Tell ACME to validate
-        order
-            .set_challenge_ready(&challenge.url)
-            .await
-            .context("set challenge ready")?;
-
-        // 7. Poll order status
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
-        loop {
-            if tokio::time::Instant::now() > deadline {
-                // Clean up TXT record before failing
-                let _ = self.cmd_tx.send(EngineCommand::ClearAcmeTxt).await;
-                anyhow::bail!("ACME order timed out");
+        for auth in &authorizations {
+            if !matches!(auth.status, AuthorizationStatus::Pending) {
+                debug!("Authorization already valid, skipping challenge");
+                continue;
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let challenge = auth
+                .challenges
+                .iter()
+                .find(|c| c.r#type == ChallengeType::Dns01)
+                .context("no DNS-01 challenge")?;
+
+            let dns_value = order.key_authorization(challenge).dns_value();
+            debug!("DNS-01 challenge value: {}", dns_value);
+
+            // 4. Set TXT record via Engine (relay writes all three names)
+            self.cmd_tx
+                .send(EngineCommand::SetAcmeTxt(dns_value.as_bytes().to_vec()))
+                .await
+                .context("send SetAcmeTxt command")?;
+
+            // 5. Wait for DNS propagation
+            info!("Waiting 10s for DNS propagation...");
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+            // 6. Tell ACME to validate this challenge
+            order
+                .set_challenge_ready(&challenge.url)
+                .await
+                .context("set challenge ready")?;
+
+            // 7. Poll until this authorization is no longer pending
+            loop {
+                if tokio::time::Instant::now() > deadline {
+                    let _ = self.cmd_tx.send(EngineCommand::ClearAcmeTxt).await;
+                    anyhow::bail!("ACME authorization timed out");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+                let state = order.refresh().await.context("refresh order")?;
+                match state.status {
+                    OrderStatus::Ready | OrderStatus::Valid => break,
+                    OrderStatus::Invalid => {
+                        let _ = self.cmd_tx.send(EngineCommand::ClearAcmeTxt).await;
+                        anyhow::bail!("ACME order invalid");
+                    }
+                    OrderStatus::Pending | OrderStatus::Processing => {
+                        debug!("ACME order status: {:?}, polling...", state.status);
+                    }
+                }
+            }
+        }
+
+        // 8. Poll for order ready/valid (all authorizations done)
+        loop {
             let state = order.refresh().await.context("refresh order")?;
             match state.status {
                 OrderStatus::Ready => {
@@ -157,14 +190,19 @@ impl AcmeManager {
                     anyhow::bail!("ACME order invalid");
                 }
                 OrderStatus::Pending | OrderStatus::Processing => {
-                    debug!("ACME order status: {:?}, polling...", state.status);
+                    if tokio::time::Instant::now() > deadline {
+                        let _ = self.cmd_tx.send(EngineCommand::ClearAcmeTxt).await;
+                        anyhow::bail!("ACME order timed out");
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 }
             }
         }
 
-        // 8. Generate key and CSR
+        // 9. Generate key and CSR with all SANs
         let key_pair = KeyPair::generate().context("generate key pair")?;
-        let csr_params = CertificateParams::new(vec![domain.to_string()]).context("CSR params")?;
+        let csr_params =
+            CertificateParams::new(domains.to_vec()).context("CSR params")?;
         let csr = csr_params
             .serialize_request(&key_pair)
             .context("serialize CSR")?;
@@ -187,11 +225,12 @@ impl AcmeManager {
             }
         };
 
-        // 9. Clear TXT record
+        // 10. Clear TXT record
         let _ = self.cmd_tx.send(EngineCommand::ClearAcmeTxt).await;
 
-        // 10. Parse and cache
+        // 11. Parse and cache (use primary domain as cache key)
         let key_pem = key_pair.serialize_pem();
+        let primary = &domains[0];
 
         let certs = Self::parse_cert_pem(&cert_chain_pem).context("parse ACME cert chain")?;
         let private_key = Self::parse_key_pem(&key_pem).context("parse ACME private key")?;
@@ -204,9 +243,9 @@ impl AcmeManager {
         let expiry = now_secs + 90 * 24 * 3600;
 
         // Save to disk
-        self.save_cache(domain, &cert_chain_pem, &key_pem, expiry)?;
+        self.save_cache(primary, &cert_chain_pem, &key_pem, expiry)?;
 
-        info!("ACME cert obtained for {}", domain);
+        info!("ACME cert obtained for {:?}", domains);
         Ok((certs, private_key))
     }
 

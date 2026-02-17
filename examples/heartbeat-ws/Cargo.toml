@@ -6,7 +6,7 @@ publish = false
 description = "WebSocket heartbeat server — sends {ts, seq} every second, echoes messages"
 
 [dependencies]
-freehold-client-core = { path = "../../crates/freehold-client-core" }
+freehold-client-core = { path = "../../crates/freehold-client-core", features = ["h3-proxy", "acme"] }
 
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.26"

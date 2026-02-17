@@ -267,6 +267,7 @@ impl FreeholdTunnel {
                 key,
                 auto_discover: self.config.auto_discover,
                 acme_cache_dir: None,
+                dns_zone: None,
             },
             status_tx,
         )

@@ -19,11 +19,26 @@
 //!   https://127.0.0.1:8443/ws
 //! ```
 //!
-//! # With relay registration
+//! # With relay + automatic ACME (dual-path DNS)
 //!
 //! ```sh
-//! cargo run -p heartbeat-ws -- --relay freehold.lit.app:9999 --relay-port 55126
+//! cargo run -p heartbeat-ws -- \
+//!   --relay freehold.lit.app:9999 --relay-port 55126 \
+//!   --acme-cache /tmp/acme-cache
 //! ```
+//!
+//! This automatically:
+//! 1. Registers with the relay
+//! 2. Creates dual-path DNS records (SVCB racing for browsers + explicit
+//!    `.relay` / `.home` subdomains for SDK clients)
+//! 3. Obtains a multi-SAN Let's Encrypt certificate
+//! 4. Hot-swaps the cert into the running QUIC endpoint
+//!
+//! Browsers connecting to `https://<hash>.freehold.lit.app:<port>` race
+//! both the relay and direct paths via SVCB. If Bob is behind permissive
+//! NAT (or has a public IP), the browser connects directly — zero relay
+//! involvement. If behind CGNAT, the relay path wins and hole-punching
+//! opens the direct path for subsequent packets.
 
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,9 +73,18 @@ struct Args {
     #[clap(long, default_value = "1000")]
     interval_ms: u64,
 
-    /// Domain for self-signed cert
+    /// Domain for self-signed cert (local mode only)
     #[clap(long, default_value = "localhost")]
     domain: String,
+
+    /// ACME certificate cache directory. When set, enables automatic
+    /// Let's Encrypt certificate with dual-path DNS (relay + home SVCB).
+    #[clap(long)]
+    acme_cache: Option<String>,
+
+    /// DNS zone for FQDN construction (used with --acme-cache)
+    #[clap(long, default_value = "freehold.lit.app")]
+    dns_zone: String,
 }
 
 #[tokio::main]
@@ -109,27 +133,76 @@ async fn main() -> Result<()> {
             .context("no addresses for relay")?;
 
         let h3_bind: SocketAddr = format!("0.0.0.0:{}", args.port).parse()?;
-        info!(
-            "Freehold service: relay {}:{} | H3 {} -> backend {}",
-            relay_str, relay_port, h3_bind, ws_addr
-        );
 
         let (status_tx, mut status_rx) = tokio::sync::mpsc::channel(32);
 
-        // Log status updates
+        let acme_cache_dir = args.acme_cache.map(std::path::PathBuf::from);
+        let has_acme = acme_cache_dir.is_some();
+
+        if has_acme {
+            info!(
+                "Freehold service: relay {}:{} | H3 {} -> backend {} | ACME enabled (zone: {})",
+                relay_str, relay_port, h3_bind, ws_addr, args.dns_zone
+            );
+            info!("  Dual-path DNS will create:");
+            info!("    <hash>.{} — SVCB racing (relay + direct)", args.dns_zone);
+            info!(
+                "    <hash>.relay.{} — explicit relay path",
+                args.dns_zone
+            );
+            info!(
+                "    <hash>.home.{} — explicit direct/home path",
+                args.dns_zone
+            );
+        } else {
+            info!(
+                "Freehold service: relay {}:{} | H3 {} -> backend {}",
+                relay_str, relay_port, h3_bind, ws_addr
+            );
+        }
+
+        // Log status updates with dual-path DNS info
+        let dns_zone = args.dns_zone.clone();
         tokio::spawn(async move {
             while let Some(update) = status_rx.recv().await {
-                info!("status: {:?}", update);
+                match update {
+                    freehold_client_core::StatusUpdate::SubdomainAssigned(ref hash) => {
+                        info!("Subdomain hash: {}", hash);
+                        info!("  Primary:  https://{}.{}:<port>", hash, dns_zone);
+                        info!("  Relay:    https://{}.relay.{}:<port>", hash, dns_zone);
+                        info!("  Home:     https://{}.home.{}:<port>", hash, dns_zone);
+                    }
+                    freehold_client_core::StatusUpdate::AcmeCertReady => {
+                        info!("ACME certificate installed — all three FQDNs are live");
+                    }
+                    _ => {
+                        info!("status: {:?}", update);
+                    }
+                }
             }
         });
 
-        let service = freehold_client_core::create_service_with_self_signed_cert(
-            relay_addr,
-            relay_port,
-            h3_bind,
-            ws_addr,
-            &args.domain,
-            true,
+        // Generate self-signed cert for initial startup
+        // (ACME will hot-swap a real cert once DNS is ready)
+        let (certs, key) =
+            freehold_client_core::generate_self_signed_cert(&[&args.domain])?;
+
+        let service = freehold_client_core::Service::new(
+            freehold_client_core::ServiceConfig {
+                relay: relay_addr,
+                relay_port,
+                h3_bind,
+                backend: ws_addr,
+                certs,
+                key,
+                auto_discover: true,
+                acme_cache_dir,
+                dns_zone: if has_acme {
+                    Some(args.dns_zone)
+                } else {
+                    None
+                },
+            },
             status_tx,
         )?;
 

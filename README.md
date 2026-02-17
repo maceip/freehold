@@ -67,7 +67,7 @@ Browser (Alice)                 Freehold Relay                  You (Bob, behind
 3. **NAT hole-punch** — if Bob is behind endpoint-dependent NAT, the relay detects the new source and sends a Punch message telling Bob to send a UDP packet to Alice, opening the NAT mapping. QUIC retransmission handles the 1-2s initial latency
 4. **Bob responds directly** — Bob sees Alice's real IP as the packet source and sends the QUIC response straight back to her, bypassing the relay entirely
 5. **Alice's NAT accepts it** — she initiated the outbound UDP, so her NAT allows the reply even though it comes from Bob's IP (QUIC uses connection IDs, not IP tuples)
-6. **TLS via DNS-01** — After proving reachability (eBPF map check), Bob sends `CreateRecords` to create DNS A + HTTPS records. His client then runs an ACME DNS-01 flow (`SetAcmeTxt` → Let's Encrypt validates → `ClearAcmeTxt`) and hot-swaps the certificate into the running QUIC endpoint with zero downtime. When `acme_cache_dir` is set, this happens automatically
+6. **TLS via DNS-01** — After proving reachability (eBPF map check), Bob sends `CreateRecords` to create dual-path DNS records. The relay creates three FQDNs: `{hash}.zone` with two HTTPS/SVCB records (relay + home) for browser SVCB racing, plus `{hash}.relay.zone` and `{hash}.home.zone` for SDK clients that want explicit path control. Bob's client then runs an ACME DNS-01 flow to obtain a multi-SAN certificate covering all three names, and hot-swaps it into the running QUIC endpoint with zero downtime. When `acme_cache_dir` is set, this happens automatically
 
 The relay is only in the **inbound** path. Alice doesn't install anything — she just uses a browser.
 
@@ -80,7 +80,8 @@ The relay is only in the **inbound** path. Alice doesn't install anything — sh
 - **H3/QUIC proxy** — Optional HTTP/3 reverse proxy with automatic TLS
 - **WebSocket over H3** — RFC 9220 Extended CONNECT for WebSocket through QUIC relay
 - **DemuxSocket** — Engine and Quinn share one UDP socket; zero mux code needed
-- **Automatic ACME certs** — Deferred DNS + automated Let's Encrypt DNS-01 with cert caching and zero-downtime hot-swap
+- **Dual-path DNS** — SVCB/HTTPS records for both relay and direct home paths; browsers race both automatically, SDK clients choose explicitly via `.relay` / `.home` subdomains
+- **Automatic ACME certs** — Multi-SAN certificate (primary + relay + home) via automated Let's Encrypt DNS-01 with cert caching and zero-downtime hot-swap
 - **Multi-platform** — Desktop, mobile, and web clients
 
 ## Installation

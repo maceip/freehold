@@ -71,11 +71,11 @@ The Confirm message supports optional trailing action bytes for DNS/ACME operati
 | Action | Byte | Payload | Purpose |
 |--------|------|---------|---------|
 | `None` | (omitted) | — | Standard registration |
-| `SetTxt` | `0x01` | `[len, data...]` | Set ACME DNS-01 TXT record |
-| `ClearTxt` | `0x02` | `[0x00]` | Clear ACME TXT record |
-| `CreateRecords` | `0x03` | `[0x00]` | Request DNS A + HTTPS records |
+| `SetTxt` | `0x01` | `[len, data...]` | Set ACME DNS-01 TXT record (all three names) |
+| `ClearTxt` | `0x02` | `[0x00]` | Clear ACME TXT records (all three names) |
+| `CreateRecords` | `0x03` | `[0x00]` | Request dual-path DNS records (SVCB + relay/home) |
 
-`CreateRecords` requires the client to already be registered in the eBPF map (proving reachability). DNS records are not created during initial registration.
+`CreateRecords` requires the client to already be registered in the eBPF map (proving reachability). DNS records are not created during initial registration. The relay creates records for three FQDNs: primary (with SVCB racing), `.relay` (explicit relay path), and `.home` (explicit direct path).
 
 ## Timing Constants
 
