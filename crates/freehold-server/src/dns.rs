@@ -79,6 +79,7 @@ impl DnsManager {
     pub fn set_txt(&self, subdomain: &str, token: &str) -> Result<()> {
         let acme_name = format!("_acme-challenge.{}", subdomain);
         self.transaction(|mgr| {
+            let _ = mgr.knotc(&["zone-unset", &mgr.zone, &acme_name, "TXT"]);
             mgr.knotc(&["zone-set", &mgr.zone, &acme_name, "60", "TXT", token])?;
             debug!("DNS: set {}.{} TXT {}", acme_name, mgr.zone, token);
             Ok(())
@@ -112,6 +113,9 @@ impl DnsManager {
     pub fn set_registration(&self, subdomain: &str, ip: Ipv4Addr, port: u16) -> Result<()> {
         let svcb_params = format!("1 . alpn=h3 port={}", port);
         self.transaction(|mgr| {
+            // Remove existing records first to make this idempotent
+            let _ = mgr.knotc(&["zone-unset", &mgr.zone, subdomain, "A"]);
+            let _ = mgr.knotc(&["zone-unset", &mgr.zone, subdomain, "HTTPS"]);
             mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "A", &ip.to_string()])?;
             mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "HTTPS", &svcb_params])?;
             debug!("DNS: registered {}.{} A {} HTTPS {}", subdomain, mgr.zone, ip, svcb_params);
