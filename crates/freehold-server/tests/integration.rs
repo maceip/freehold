@@ -103,7 +103,11 @@ fn full_registration_flow() {
     };
 
     // Step 3: Client sends CONFIRM with cookie
-    let confirm = Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None };
+    let confirm = Message::Confirm {
+        port,
+        cookie,
+        action: freehold_api::ConfirmAction::None,
+    };
     let response = server
         .handle(confirm, client_ip)
         .expect("should get neighbors");
@@ -168,7 +172,11 @@ fn quota_exceeded() {
             _ => panic!("Expected CHALLENGE"),
         };
 
-        let confirm = Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None };
+        let confirm = Message::Confirm {
+            port,
+            cookie,
+            action: freehold_api::ConfirmAction::None,
+        };
         let response = server.handle(confirm, client_ip);
         assert!(matches!(response, Some(Message::Neighbors { .. })));
     }
@@ -249,7 +257,14 @@ fn heartbeat_only_responds_to_registered() {
         _ => panic!("Expected CHALLENGE"),
     };
     server
-        .handle(Message::Confirm { port: 8080, cookie, action: freehold_api::ConfirmAction::None }, client_ip)
+        .handle(
+            Message::Confirm {
+                port: 8080,
+                cookie,
+                action: freehold_api::ConfirmAction::None,
+            },
+            client_ip,
+        )
         .unwrap();
 
     // Now heartbeat should work
@@ -319,7 +334,11 @@ fn multiple_clients_different_ips() {
             _ => panic!("Expected CHALLENGE"),
         };
 
-        let confirm = Message::Confirm { port: 8080, cookie, action: freehold_api::ConfirmAction::None };
+        let confirm = Message::Confirm {
+            port: 8080,
+            cookie,
+            action: freehold_api::ConfirmAction::None,
+        };
         let response = server.handle(confirm, client_ip);
         assert!(
             matches!(response, Some(Message::Neighbors { .. })),
@@ -368,7 +387,11 @@ mod client_server_integration {
             .any(|a| matches!(a, Action::SendConfirm { .. })));
 
         // Simulate sending CONFIRM and getting NEIGHBORS
-        let confirm = Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None };
+        let confirm = Message::Confirm {
+            port,
+            cookie,
+            action: freehold_api::ConfirmAction::None,
+        };
         let neighbors = server.handle(confirm, client_ip).unwrap();
 
         // Client handles NEIGHBORS
@@ -405,7 +428,11 @@ mod client_server_integration {
             _ => panic!("Expected CHALLENGE"),
         };
 
-        let confirm = Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None };
+        let confirm = Message::Confirm {
+            port,
+            cookie,
+            action: freehold_api::ConfirmAction::None,
+        };
         let neighbors = server.handle(confirm, client_ip).unwrap();
 
         // Handle NEIGHBORS - should discover new relays

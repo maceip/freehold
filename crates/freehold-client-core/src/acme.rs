@@ -10,8 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use instant_acme::{
-    Account, AuthorizationStatus, ChallengeType, Identifier, NewAccount,
-    NewOrder, OrderStatus,
+    Account, AuthorizationStatus, ChallengeType, Identifier, NewAccount, NewOrder, OrderStatus,
 };
 use rcgen::{CertificateParams, KeyPair};
 use serde::{Deserialize, Serialize};
@@ -134,8 +133,7 @@ impl AcmeManager {
             .context("set challenge ready")?;
 
         // 7. Poll order status
-        let deadline =
-            tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
             if tokio::time::Instant::now() > deadline {
                 // Clean up TXT record before failing
@@ -166,8 +164,7 @@ impl AcmeManager {
 
         // 8. Generate key and CSR
         let key_pair = KeyPair::generate().context("generate key pair")?;
-        let csr_params =
-            CertificateParams::new(vec![domain.to_string()]).context("CSR params")?;
+        let csr_params = CertificateParams::new(vec![domain.to_string()]).context("CSR params")?;
         let csr = csr_params
             .serialize_request(&key_pair)
             .context("serialize CSR")?;
@@ -196,10 +193,8 @@ impl AcmeManager {
         // 10. Parse and cache
         let key_pem = key_pair.serialize_pem();
 
-        let certs = Self::parse_cert_pem(&cert_chain_pem)
-            .context("parse ACME cert chain")?;
-        let private_key = Self::parse_key_pem(&key_pem)
-            .context("parse ACME private key")?;
+        let certs = Self::parse_cert_pem(&cert_chain_pem).context("parse ACME cert chain")?;
+        let private_key = Self::parse_key_pem(&key_pem).context("parse ACME private key")?;
 
         // Calculate expiry (approximate: 90 days from now for LE)
         let now_secs = std::time::SystemTime::now()
@@ -219,8 +214,7 @@ impl AcmeManager {
         let account_path = self.cache_dir.join("account.json");
 
         if account_path.exists() {
-            let data = std::fs::read_to_string(&account_path)
-                .context("read account cache")?;
+            let data = std::fs::read_to_string(&account_path).context("read account cache")?;
             let credentials: instant_acme::AccountCredentials =
                 serde_json::from_str(&data).context("parse account cache")?;
             let account = Account::from_credentials(credentials)
@@ -246,8 +240,7 @@ impl AcmeManager {
 
         // Cache credentials
         std::fs::create_dir_all(&self.cache_dir).context("create cache dir")?;
-        let json = serde_json::to_string_pretty(&credentials)
-            .context("serialize account")?;
+        let json = serde_json::to_string_pretty(&credentials).context("serialize account")?;
         std::fs::write(&account_path, json).context("write account cache")?;
         info!("Created new ACME account");
 
@@ -258,13 +251,7 @@ impl AcmeManager {
         self.cache_dir.join(format!("{}.json", domain))
     }
 
-    fn save_cache(
-        &self,
-        domain: &str,
-        cert_pem: &str,
-        key_pem: &str,
-        expiry: i64,
-    ) -> Result<()> {
+    fn save_cache(&self, domain: &str, cert_pem: &str, key_pem: &str, expiry: i64) -> Result<()> {
         std::fs::create_dir_all(&self.cache_dir).context("create cache dir")?;
         let cache = CertCache {
             cert_pem: cert_pem.to_string(),
@@ -278,9 +265,7 @@ impl AcmeManager {
         Ok(())
     }
 
-    fn parse_cert_pem(
-        pem: &str,
-    ) -> Option<Vec<rustls::pki_types::CertificateDer<'static>>> {
+    fn parse_cert_pem(pem: &str) -> Option<Vec<rustls::pki_types::CertificateDer<'static>>> {
         let certs: Vec<_> = rustls_pemfile::certs(&mut pem.as_bytes())
             .filter_map(|r| r.ok())
             .collect();
@@ -320,10 +305,8 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
         let cache = CertCache {
-            cert_pem: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"
-                .to_string(),
-            key_pem: "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n"
-                .to_string(),
+            cert_pem: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n".to_string(),
+            key_pem: "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n".to_string(),
             expiry: now - 86400, // expired yesterday
             domain: "example.com".to_string(),
         };

@@ -8,9 +8,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use freehold_client_core::{
-    Service, ServiceConfig, StatusUpdate,
-};
+use freehold_client_core::{Service, ServiceConfig, StatusUpdate};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
@@ -117,9 +115,7 @@ pub async fn run_service(
                     }
                 }
                 StatusUpdate::Error(msg) => ScuteEvent::Error { message: msg },
-                StatusUpdate::Traffic { sent, received } => {
-                    ScuteEvent::Traffic { sent, received }
-                }
+                StatusUpdate::Traffic { sent, received } => ScuteEvent::Traffic { sent, received },
                 StatusUpdate::AcmeCertReady => ScuteEvent::AcmeReady,
                 StatusUpdate::NeighborDiscovered(_) | StatusUpdate::PortChanged { .. } => continue,
             };
@@ -204,9 +200,7 @@ pub unsafe extern "C" fn scute_stop(handle: *mut ScuteHandle) {
 /// # Safety
 /// `handle` must be a valid pointer from `scute_start`.
 #[no_mangle]
-pub unsafe extern "C" fn scute_poll_event(
-    handle: *mut ScuteHandle,
-) -> *mut std::os::raw::c_char {
+pub unsafe extern "C" fn scute_poll_event(handle: *mut ScuteHandle) -> *mut std::os::raw::c_char {
     if handle.is_null() {
         return std::ptr::null_mut();
     }

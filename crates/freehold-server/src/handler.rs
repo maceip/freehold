@@ -137,7 +137,11 @@ pub trait MessageHandler {
     fn handle(&mut self, msg: Message, from_ip: Ipv4Addr) -> HandleResult {
         match msg {
             Message::Register { port } => self.handle_register(from_ip, port),
-            Message::Confirm { port, cookie, action } => self.handle_confirm(from_ip, port, cookie, action),
+            Message::Confirm {
+                port,
+                cookie,
+                action,
+            } => self.handle_confirm(from_ip, port, cookie, action),
             Message::Heartbeat { port } => self.handle_heartbeat(from_ip, port),
             _ => HandleResult::NoReply,
         }
@@ -192,7 +196,10 @@ pub trait MessageHandler {
                 // This proves the client completed a prior registration cycle,
                 // has been heartbeating, and the relay can forward traffic to it.
                 if !self.is_registered(from_ip, port) {
-                    warn!("CreateRecords rejected for {}:{} — not registered", from_ip, port);
+                    warn!(
+                        "CreateRecords rejected for {}:{} — not registered",
+                        from_ip, port
+                    );
                     return Message::Error { port }.into();
                 }
                 if let Some(ref dns) = self.context().dns_manager {
@@ -329,7 +336,14 @@ mod tests {
         };
 
         // Step 2: CONFIRM
-        let result = handler.handle(Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None }, client_ip);
+        let result = handler.handle(
+            Message::Confirm {
+                port,
+                cookie,
+                action: freehold_api::ConfirmAction::None,
+            },
+            client_ip,
+        );
         match result {
             HandleResult::Reply(Message::Neighbors { addrs, .. }) => {
                 assert_eq!(addrs.len(), 2);
@@ -405,7 +419,14 @@ mod tests {
                 HandleResult::Reply(Message::Challenge { cookie, .. }) => cookie,
                 _ => panic!("Expected CHALLENGE"),
             };
-            let result = handler.handle(Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None }, client_ip);
+            let result = handler.handle(
+                Message::Confirm {
+                    port,
+                    cookie,
+                    action: freehold_api::ConfirmAction::None,
+                },
+                client_ip,
+            );
             assert!(matches!(
                 result,
                 HandleResult::Reply(Message::Neighbors { .. })
@@ -440,7 +461,14 @@ mod tests {
                 HandleResult::Reply(Message::Challenge { cookie, .. }) => cookie,
                 _ => panic!("Expected CHALLENGE"),
             };
-            let result = handler.handle(Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None }, client_ip);
+            let result = handler.handle(
+                Message::Confirm {
+                    port,
+                    cookie,
+                    action: freehold_api::ConfirmAction::None,
+                },
+                client_ip,
+            );
             assert!(
                 matches!(result, HandleResult::Reply(Message::Neighbors { .. })),
                 "Client {} should be able to register port {}",

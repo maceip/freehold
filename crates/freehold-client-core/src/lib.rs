@@ -53,7 +53,7 @@ mod demux {
     use std::net::SocketAddr;
     use std::pin::Pin;
     use std::sync::Arc;
-    use std::task::{Context, Poll, ready};
+    use std::task::{ready, Context, Poll};
 
     use quinn::udp::RecvMeta;
     use quinn::{AsyncUdpSocket, UdpPoller};
@@ -108,8 +108,7 @@ mod demux {
                     Ok((len, addr)) => {
                         if len > 0 && bufs[0][0] == 0x46 {
                             // Freehold protocol — send to Engine, keep reading
-                            let _ =
-                                self.freehold_tx.send((bufs[0][..len].to_vec(), addr));
+                            let _ = self.freehold_tx.send((bufs[0][..len].to_vec(), addr));
                             continue;
                         }
                         // QUIC packet — return to Quinn
@@ -371,7 +370,11 @@ impl Engine {
                         return Ok(());
                     }
                     EngineCommand::RequestDns => {
-                        if let Some(idx) = self.relays.iter().position(|r| r.state == RelayState::Connected) {
+                        if let Some(idx) = self
+                            .relays
+                            .iter()
+                            .position(|r| r.state == RelayState::Connected)
+                        {
                             info!("Sending CreateRecords to relay");
                             self.send_confirm(idx, ConfirmAction::CreateRecords);
                         } else {
@@ -379,7 +382,11 @@ impl Engine {
                         }
                     }
                     EngineCommand::SetAcmeTxt(data) => {
-                        if let Some(idx) = self.relays.iter().position(|r| r.state == RelayState::Connected) {
+                        if let Some(idx) = self
+                            .relays
+                            .iter()
+                            .position(|r| r.state == RelayState::Connected)
+                        {
                             info!("Sending SetTxt to relay");
                             self.send_confirm(idx, ConfirmAction::SetTxt(data));
                         } else {
@@ -387,7 +394,11 @@ impl Engine {
                         }
                     }
                     EngineCommand::ClearAcmeTxt => {
-                        if let Some(idx) = self.relays.iter().position(|r| r.state == RelayState::Connected) {
+                        if let Some(idx) = self
+                            .relays
+                            .iter()
+                            .position(|r| r.state == RelayState::Connected)
+                        {
                             info!("Sending ClearTxt to relay");
                             self.send_confirm(idx, ConfirmAction::ClearTxt);
                         } else {
@@ -557,7 +568,9 @@ impl Engine {
                     if self.last_subdomain.as_ref() != Some(sub) {
                         self.last_subdomain = Some(sub.clone());
                         let _ = self.subdomain_tx.send(Some(sub.clone()));
-                        let _ = self.status_tx.try_send(StatusUpdate::SubdomainAssigned(sub.clone()));
+                        let _ = self
+                            .status_tx
+                            .try_send(StatusUpdate::SubdomainAssigned(sub.clone()));
                     }
                 }
                 if self.relays[idx].state == RelayState::Pending {
@@ -734,14 +747,8 @@ impl Service {
             let status_tx = self.status_tx.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = run_acme_task(
-                    cache_dir,
-                    cmd_tx,
-                    subdomain_rx,
-                    acme_endpoint,
-                    status_tx,
-                )
-                .await
+                if let Err(e) =
+                    run_acme_task(cache_dir, cmd_tx, subdomain_rx, acme_endpoint, status_tx).await
                 {
                     warn!("ACME task failed: {:?}", e);
                 }
@@ -778,7 +785,10 @@ async fn run_acme_task(
 
     // Wait for subdomain assignment
     loop {
-        subdomain_rx.changed().await.context("subdomain channel closed")?;
+        subdomain_rx
+            .changed()
+            .await
+            .context("subdomain channel closed")?;
         if subdomain_rx.borrow().is_some() {
             break;
         }

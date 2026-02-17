@@ -59,7 +59,14 @@ impl DnsManager {
     /// Set A record for a subdomain pointing to relay IP
     pub fn set_a(&self, subdomain: &str, ip: Ipv4Addr) -> Result<()> {
         self.transaction(|mgr| {
-            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "A", &ip.to_string()])?;
+            mgr.knotc(&[
+                "zone-set",
+                &mgr.zone,
+                subdomain,
+                "300",
+                "A",
+                &ip.to_string(),
+            ])?;
             debug!("DNS: set {}.{} A {}", subdomain, mgr.zone, ip);
             Ok(())
         })
@@ -69,7 +76,14 @@ impl DnsManager {
     pub fn set_https(&self, subdomain: &str, port: u16) -> Result<()> {
         let svcb_params = format!("1 . alpn=h3 port={}", port);
         self.transaction(|mgr| {
-            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "HTTPS", &svcb_params])?;
+            mgr.knotc(&[
+                "zone-set",
+                &mgr.zone,
+                subdomain,
+                "300",
+                "HTTPS",
+                &svcb_params,
+            ])?;
             debug!("DNS: set {}.{} HTTPS {}", subdomain, mgr.zone, svcb_params);
             Ok(())
         })
@@ -116,9 +130,26 @@ impl DnsManager {
             // Remove existing records first to make this idempotent
             let _ = mgr.knotc(&["zone-unset", &mgr.zone, subdomain, "A"]);
             let _ = mgr.knotc(&["zone-unset", &mgr.zone, subdomain, "HTTPS"]);
-            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "A", &ip.to_string()])?;
-            mgr.knotc(&["zone-set", &mgr.zone, subdomain, "300", "HTTPS", &svcb_params])?;
-            debug!("DNS: registered {}.{} A {} HTTPS {}", subdomain, mgr.zone, ip, svcb_params);
+            mgr.knotc(&[
+                "zone-set",
+                &mgr.zone,
+                subdomain,
+                "300",
+                "A",
+                &ip.to_string(),
+            ])?;
+            mgr.knotc(&[
+                "zone-set",
+                &mgr.zone,
+                subdomain,
+                "300",
+                "HTTPS",
+                &svcb_params,
+            ])?;
+            debug!(
+                "DNS: registered {}.{} A {} HTTPS {}",
+                subdomain, mgr.zone, ip, svcb_params
+            );
             Ok(())
         })
     }

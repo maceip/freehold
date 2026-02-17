@@ -96,8 +96,7 @@ async fn websocket_over_h3_echo() {
         .with_no_client_auth();
     client_tls.alpn_protocols = vec![b"h3".to_vec()];
 
-    let quic_client_config =
-        QuicClientConfig::try_from(client_tls).expect("QUIC client config");
+    let quic_client_config = QuicClientConfig::try_from(client_tls).expect("QUIC client config");
 
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
     endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(quic_client_config)));

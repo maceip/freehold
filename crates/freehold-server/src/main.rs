@@ -116,7 +116,11 @@ impl Server {
                 debug!("REGISTER {} port {} -> CHALLENGE", ip, port);
             }
 
-            Message::Confirm { port, cookie, action } => {
+            Message::Confirm {
+                port,
+                cookie,
+                action,
+            } => {
                 let current_bucket = time_bucket();
                 if !self
                     .cookie_auth
@@ -159,7 +163,10 @@ impl Server {
                             Err(_) => false,
                         };
                         if !is_registered {
-                            warn!("CreateRecords rejected for {}:{} — not registered", ip, port);
+                            warn!(
+                                "CreateRecords rejected for {}:{} — not registered",
+                                ip, port
+                            );
                             socket.send_to(&Message::Error { port }.to_bytes(), from)?;
                             return Ok(());
                         }
@@ -184,7 +191,8 @@ impl Server {
                                 Ok(token) => {
                                     if let Err(e) = dns.set_txt(&subdomain, &token) {
                                         warn!("DNS SetTxt failed for {}: {}", subdomain, e);
-                                        socket.send_to(&Message::Error { port }.to_bytes(), from)?;
+                                        socket
+                                            .send_to(&Message::Error { port }.to_bytes(), from)?;
                                         return Ok(());
                                     }
                                     self.txt_rate.record(port);
@@ -227,8 +235,7 @@ impl Server {
                         return Ok(());
                     }
                     reg.expiry = ktime_get_ns() + timing::REGISTRATION_TTL.as_nanos() as u64;
-                    regs.insert(port, reg, 0)
-                        .context("update registration")?;
+                    regs.insert(port, reg, 0).context("update registration")?;
                     debug!("HEARTBEAT {} port {}", ip, port);
                 }
                 drop(regs);
@@ -274,7 +281,10 @@ impl Server {
                 if let Some(owner_ip) = quotas.get_owner(*port) {
                     let subdomain = self.cookie_auth.subdomain(owner_ip, *port);
                     if let Err(e) = dns.clear_all(&subdomain) {
-                        warn!("DNS cleanup failed for {} (port {}): {}", subdomain, port, e);
+                        warn!(
+                            "DNS cleanup failed for {} (port {}): {}",
+                            subdomain, port, e
+                        );
                     }
                     self.txt_rate.remove(*port);
                 }
@@ -397,20 +407,34 @@ async fn process_xdp_events(
 
                                             // XDP already rewrote dst to home_ip:home_port,
                                             // so the event contains Bob's address directly
-                                            let home_addr = SocketAddr::new(dst_ip.into(), event.dst_port);
+                                            let home_addr =
+                                                SocketAddr::new(dst_ip.into(), event.dst_port);
                                             let punch_msg = Message::Punch {
-                                                addr: SocketAddr::new(src_ip.into(), event.src_port),
+                                                addr: SocketAddr::new(
+                                                    src_ip.into(),
+                                                    event.src_port,
+                                                ),
                                             };
-                                            if let Err(e) = punch_socket.send_to(&punch_msg.to_bytes(), home_addr) {
-                                                warn!("Failed to send Punch to {}: {}", home_addr, e);
+                                            if let Err(e) = punch_socket
+                                                .send_to(&punch_msg.to_bytes(), home_addr)
+                                            {
+                                                warn!(
+                                                    "Failed to send Punch to {}: {}",
+                                                    home_addr, e
+                                                );
                                             } else {
-                                                debug!("Punch: sent {}:{} -> {}", src_ip, event.src_port, home_addr);
+                                                debug!(
+                                                    "Punch: sent {}:{} -> {}",
+                                                    src_ip, event.src_port, home_addr
+                                                );
                                             }
                                         }
 
                                         // Periodic prune of stale entries
                                         if now.duration_since(last_prune) >= PUNCH_SEEN_TTL {
-                                            punch_tracker.seen.retain(|_, t| now.duration_since(*t) < PUNCH_SEEN_TTL);
+                                            punch_tracker.seen.retain(|_, t| {
+                                                now.duration_since(*t) < PUNCH_SEEN_TTL
+                                            });
                                             last_prune = now;
                                         }
                                     }

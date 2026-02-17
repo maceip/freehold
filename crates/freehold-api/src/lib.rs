@@ -198,7 +198,9 @@ impl Message {
                                             actual: data.len(),
                                         });
                                     }
-                                    let txt_data = data[4 + COOKIE_SIZE + 2..4 + COOKIE_SIZE + 2 + txt_len].to_vec();
+                                    let txt_data = data
+                                        [4 + COOKIE_SIZE + 2..4 + COOKIE_SIZE + 2 + txt_len]
+                                        .to_vec();
                                     ConfirmAction::SetTxt(txt_data)
                                 }
                                 0x02 => {
@@ -226,7 +228,11 @@ impl Message {
                         } else {
                             ConfirmAction::None
                         };
-                        Message::Confirm { port, cookie, action }
+                        Message::Confirm {
+                            port,
+                            cookie,
+                            action,
+                        }
                     }
                     _ => unreachable!(),
                 })
@@ -303,7 +309,11 @@ impl Message {
                 buf
             }
 
-            Message::Confirm { port, cookie, action } => {
+            Message::Confirm {
+                port,
+                cookie,
+                action,
+            } => {
                 let mut buf = vec![MAGIC, MessageType::Confirm as u8, 0, 0];
                 BigEndian::write_u16(&mut buf[2..4], *port);
                 buf.extend_from_slice(cookie);
@@ -429,10 +439,16 @@ mod tests {
     #[test]
     fn roundtrip_confirm() {
         let cookie = [0xAB; COOKIE_SIZE];
-        let msg = Message::Confirm { port: 9000, cookie, action: ConfirmAction::None };
+        let msg = Message::Confirm {
+            port: 9000,
+            cookie,
+            action: ConfirmAction::None,
+        };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Confirm { port: 9000, cookie: c, action: ConfirmAction::None } if c == cookie));
+        assert!(
+            matches!(parsed, Message::Confirm { port: 9000, cookie: c, action: ConfirmAction::None } if c == cookie)
+        );
     }
 
     #[test]
@@ -490,10 +506,15 @@ mod tests {
 
     #[test]
     fn roundtrip_neighbors_empty() {
-        let msg = Message::Neighbors { addrs: vec![], subdomain: None };
+        let msg = Message::Neighbors {
+            addrs: vec![],
+            subdomain: None,
+        };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Neighbors { addrs, subdomain: None } if addrs.is_empty()));
+        assert!(
+            matches!(parsed, Message::Neighbors { addrs, subdomain: None } if addrs.is_empty())
+        );
     }
 
     #[test]
@@ -514,7 +535,10 @@ mod tests {
     fn neighbors_truncates_to_max() {
         // Create more than MAX_NEIGHBORS addresses
         let addrs: Vec<Ipv4Addr> = (0..20).map(|i| Ipv4Addr::new(10, 0, 0, i)).collect();
-        let msg = Message::Neighbors { addrs, subdomain: None };
+        let msg = Message::Neighbors {
+            addrs,
+            subdomain: None,
+        };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         if let Message::Neighbors { addrs, .. } = parsed {
@@ -555,7 +579,14 @@ mod tests {
             0x03
         );
         assert_eq!(Message::Heartbeat { port: 0 }.to_bytes()[1], 0x04);
-        assert_eq!(Message::Neighbors { addrs: vec![], subdomain: None }.to_bytes()[1], 0x05);
+        assert_eq!(
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None
+            }
+            .to_bytes()[1],
+            0x05
+        );
         assert_eq!(
             Message::Punch {
                 addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
@@ -606,11 +637,27 @@ mod tests {
             .len(),
             8
         );
-        assert_eq!(Message::Neighbors { addrs: vec![], subdomain: None }.to_bytes().len(), 3);
+        assert_eq!(
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None
+            }
+            .to_bytes()
+            .len(),
+            3
+        );
 
         // Neighbors with 2 IPs = 3 + 2*4 = 11
         let addrs = vec![Ipv4Addr::LOCALHOST, Ipv4Addr::LOCALHOST];
-        assert_eq!(Message::Neighbors { addrs, subdomain: None }.to_bytes().len(), 11);
+        assert_eq!(
+            Message::Neighbors {
+                addrs,
+                subdomain: None
+            }
+            .to_bytes()
+            .len(),
+            11
+        );
     }
 
     // ==================== Parse Error Tests ====================
@@ -765,7 +812,8 @@ mod tests {
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         if let Message::Neighbors {
-            addrs: parsed_addrs, ..
+            addrs: parsed_addrs,
+            ..
         } = parsed
         {
             assert_eq!(parsed_addrs, addrs);
@@ -800,7 +848,11 @@ mod tests {
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         match parsed {
-            Message::Confirm { port, cookie: c, action: ConfirmAction::SetTxt(t) } => {
+            Message::Confirm {
+                port,
+                cookie: c,
+                action: ConfirmAction::SetTxt(t),
+            } => {
                 assert_eq!(port, 443);
                 assert_eq!(c, cookie);
                 assert_eq!(t, token);
@@ -820,7 +872,11 @@ mod tests {
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         match parsed {
-            Message::Confirm { port, cookie: c, action: ConfirmAction::ClearTxt } => {
+            Message::Confirm {
+                port,
+                cookie: c,
+                action: ConfirmAction::ClearTxt,
+            } => {
                 assert_eq!(port, 443);
                 assert_eq!(c, cookie);
             }
@@ -835,7 +891,13 @@ mod tests {
         let mut bytes = vec![MAGIC, MessageType::Confirm as u8, 0x01, 0xBB];
         bytes.extend_from_slice(&cookie);
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Confirm { action: ConfirmAction::None, .. }));
+        assert!(matches!(
+            parsed,
+            Message::Confirm {
+                action: ConfirmAction::None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -881,7 +943,10 @@ mod tests {
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         match parsed {
-            Message::Neighbors { addrs: a, subdomain: Some(s) } => {
+            Message::Neighbors {
+                addrs: a,
+                subdomain: Some(s),
+            } => {
                 assert_eq!(a, addrs);
                 assert_eq!(s, "abcdef123456");
             }
@@ -895,7 +960,13 @@ mod tests {
         let mut bytes = vec![MAGIC, MessageType::Neighbors as u8, 0x01];
         bytes.extend_from_slice(&[10, 0, 0, 1]);
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Neighbors { subdomain: None, .. }));
+        assert!(matches!(
+            parsed,
+            Message::Neighbors {
+                subdomain: None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -924,7 +995,11 @@ mod tests {
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         match parsed {
-            Message::Confirm { port, cookie: c, action: ConfirmAction::CreateRecords } => {
+            Message::Confirm {
+                port,
+                cookie: c,
+                action: ConfirmAction::CreateRecords,
+            } => {
                 assert_eq!(port, 443);
                 assert_eq!(c, cookie);
             }

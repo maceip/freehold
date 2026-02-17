@@ -77,7 +77,10 @@ pub enum Action {
     /// Send a CONFIRM message to this relay
     SendConfirm { relay_idx: usize },
     /// Send a CONFIRM with an ACME action to this relay
-    SendConfirmWithAction { relay_idx: usize, action: ConfirmAction },
+    SendConfirmWithAction {
+        relay_idx: usize,
+        action: ConfirmAction,
+    },
     /// Send a HEARTBEAT message to this relay
     SendHeartbeat { relay_idx: usize },
     /// Notify UI of state change
@@ -304,7 +307,9 @@ impl StateMachine {
                     self.relays[idx].subdomain = subdomain.clone();
                     if self.last_subdomain.as_ref() != Some(sub) {
                         self.last_subdomain = Some(sub.clone());
-                        actions.push(Action::NotifySubdomain { subdomain: sub.clone() });
+                        actions.push(Action::NotifySubdomain {
+                            subdomain: sub.clone(),
+                        });
                     }
                 }
                 self.relays[idx].last_activity = Some(now);
@@ -460,8 +465,14 @@ mod tests {
         // First get to Pending state
         sm.relays[0].state = RelayState::Pending;
 
-        let actions =
-            sm.handle_message(Message::Neighbors { addrs: vec![], subdomain: None }, relay_addr(9999), now);
+        let actions = sm.handle_message(
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None,
+            },
+            relay_addr(9999),
+            now,
+        );
 
         assert_eq!(sm.relays[0].state, RelayState::Connected);
         assert!(actions.contains(&Action::NotifyStateChange {
@@ -614,7 +625,10 @@ mod tests {
 
         // Message from unknown relay
         let actions = sm.handle_message(
-            Message::Neighbors { addrs: vec![], subdomain: None },
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None,
+            },
             relay_addr(8888), // Unknown port
             now,
         );
@@ -663,7 +677,14 @@ mod tests {
                     )
                 })
                 .collect();
-            sm.handle_message(Message::Neighbors { addrs, subdomain: None }, relay_addr(9999), now);
+            sm.handle_message(
+                Message::Neighbors {
+                    addrs,
+                    subdomain: None,
+                },
+                relay_addr(9999),
+                now,
+            );
             // Advance time to next rate limit window
             time_offset += RATE_LIMIT_WINDOW;
         }
@@ -683,7 +704,14 @@ mod tests {
             .map(|i| Ipv4Addr::new(10, 0, (i >> 8) as u8, (i & 0xFF) as u8))
             .collect();
 
-        sm.handle_message(Message::Neighbors { addrs, subdomain: None }, relay_addr(9999), now);
+        sm.handle_message(
+            Message::Neighbors {
+                addrs,
+                subdomain: None,
+            },
+            relay_addr(9999),
+            now,
+        );
 
         // Should be capped at MAX_NEIGHBORS
         assert!(sm.neighbors.len() <= MAX_NEIGHBORS);
@@ -748,7 +776,14 @@ mod tests {
 
         // Receive NEIGHBORS (successful connection)
         sm.relays[0].state = RelayState::Pending;
-        sm.handle_message(Message::Neighbors { addrs: vec![], subdomain: None }, relay_addr(9999), now);
+        sm.handle_message(
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None,
+            },
+            relay_addr(9999),
+            now,
+        );
 
         // Retry count should be reset
         assert_eq!(sm.relays[0].retry_count, 0);
@@ -867,7 +902,10 @@ mod tests {
         for i in 0..150 {
             let ip = Ipv4Addr::new(10, 0, 0, i as u8);
             let actions = sm.handle_message(
-                Message::Neighbors { addrs: vec![ip], subdomain: None },
+                Message::Neighbors {
+                    addrs: vec![ip],
+                    subdomain: None,
+                },
                 relay_addr(9999),
                 now,
             );
@@ -900,7 +938,14 @@ mod tests {
         let now = Instant::now();
 
         // Message from addr2 should match relay 1, not relay 0
-        let actions = sm.handle_message(Message::Neighbors { addrs: vec![], subdomain: None }, addr2, now);
+        let actions = sm.handle_message(
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None,
+            },
+            addr2,
+            now,
+        );
 
         // Relay 1 should transition to Connected (it was Pending)
         assert_eq!(sm.relays[1].state, RelayState::Connected);
@@ -924,7 +969,14 @@ mod tests {
         let now = Instant::now();
 
         // Receive message from new IP (same port - anycast scenario)
-        sm.handle_message(Message::Neighbors { addrs: vec![], subdomain: None }, new_addr, now);
+        sm.handle_message(
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None,
+            },
+            new_addr,
+            now,
+        );
 
         // Relay address should be updated to new IP
         assert_eq!(sm.relays[0].addr, new_addr);
@@ -946,7 +998,14 @@ mod tests {
         let now = Instant::now();
 
         // Message from addr1 should match relay 0 exactly
-        sm.handle_message(Message::Neighbors { addrs: vec![], subdomain: None }, addr1, now);
+        sm.handle_message(
+            Message::Neighbors {
+                addrs: vec![],
+                subdomain: None,
+            },
+            addr1,
+            now,
+        );
 
         // Only relay 0 should transition
         assert_eq!(sm.relays[0].state, RelayState::Connected);

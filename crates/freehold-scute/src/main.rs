@@ -25,8 +25,7 @@ async fn main() -> Result<()> {
         .nth(1)
         .context("usage: scute-service '<json config>'")?;
 
-    let config: ScuteConfig =
-        serde_json::from_str(&config_json).context("invalid config JSON")?;
+    let config: ScuteConfig = serde_json::from_str(&config_json).context("invalid config JSON")?;
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ScuteEvent>();

@@ -37,7 +37,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
 
 #[derive(Parser)]
-#[command(name = "heartbeat-ws", about = "WebSocket heartbeat server for Freehold")]
+#[command(
+    name = "heartbeat-ws",
+    about = "WebSocket heartbeat server for Freehold"
+)]
 struct Args {
     /// Relay server address (skip for local-only mode)
     #[clap(long)]
@@ -133,7 +136,7 @@ async fn main() -> Result<()> {
         service.run(shutdown_rx).await
     } else {
         // Local-only mode: H3 proxy without relay
-        use freehold_client_core::{H3Proxy, H3ProxyConfig, generate_self_signed_cert};
+        use freehold_client_core::{generate_self_signed_cert, H3Proxy, H3ProxyConfig};
 
         let h3_bind: SocketAddr = format!("0.0.0.0:{}", args.port).parse()?;
         let (certs, key) = generate_self_signed_cert(&[&args.domain])?;

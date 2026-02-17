@@ -266,7 +266,9 @@ mod tests {
         let auth = CookieAuth::new(test_secret());
         let sub = auth.subdomain(Ipv4Addr::new(10, 0, 0, 1), 8080);
         assert_eq!(sub.len(), 12);
-        assert!(sub.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(sub
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
     }
 
     #[test]

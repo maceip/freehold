@@ -162,7 +162,8 @@ async fn handle_connection(incoming: quinn::Incoming, backend: SocketAddr) -> Re
                                 if *protocol == Protocol::WEB_TRANSPORT {
                                     info!("WebTransport CONNECT from {}", remote);
                                     // WebTransportSession::accept() takes ownership of h3_conn
-                                    return handle_webtransport(request, stream, h3_conn, backend).await;
+                                    return handle_webtransport(request, stream, h3_conn, backend)
+                                        .await;
                                 }
                             }
                         }
@@ -423,9 +424,7 @@ where
 }
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4)
+    buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
 }
 
 // ---------------------------------------------------------------------------
