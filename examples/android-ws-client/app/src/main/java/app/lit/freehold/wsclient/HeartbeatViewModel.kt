@@ -23,7 +23,7 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 data class UiState(
-    val url: String = "https://142.248.222.1:55126/ws",
+    val url: String = "https://SUBDOMAIN.freehold.lit.app:PORT/ws",
     val connected: Boolean = false,
     val connecting: Boolean = false,
     val error: String? = null,

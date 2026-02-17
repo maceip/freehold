@@ -55,7 +55,7 @@ fun HeartbeatScreen(vm: HeartbeatViewModel = viewModel()) {
             value = state.url,
             onValueChange = vm::setUrl,
             label = { Text("Server URL") },
-            placeholder = { Text("https://142.248.222.1:55126/ws") },
+            placeholder = { Text("https://abc123.freehold.lit.app:55126/ws") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )

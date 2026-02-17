@@ -54,6 +54,18 @@ That's it. Five message types total: `Register`, `Challenge`, `Confirm`,
 `Heartbeat`, `Punch`. Each one is a small UDP packet starting with the
 byte `0x46` (ASCII "F" for Freehold).
 
+### What about TLS certificates?
+
+When Bob registers, the relay computes an HMAC-derived subdomain —
+something like `a7xk2m.freehold.lit.app` — and sets DNS A + HTTPS
+records for it. Bob can then use DNS-01 ACME challenges to get a real
+Let's Encrypt certificate for that subdomain. He sends the challenge
+token in his `Confirm` message, the relay sets the `_acme-challenge` TXT
+record, and Bob completes the ACME flow. Now Chrome trusts his cert.
+
+Clients connect using the subdomain (`https://a7xk2m.freehold.lit.app:8443`),
+which gives them correct TLS SNI matching. No certificate warnings.
+
 ### What about HTTP and WebSocket?
 
 Your backend speaks HTTP. Browsers speak HTTP. But this protocol is all

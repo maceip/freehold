@@ -5,6 +5,7 @@ struct ContentView: View {
     @State private var host = ""
     @State private var port = "8443"
     @State private var sendText = "hello"
+    @State private var devMode = false
 
     private var isConnected: Bool { client.state == .connected }
     private var isConnecting: Bool { client.state == .connecting }
@@ -14,7 +15,7 @@ struct ContentView: View {
             VStack(spacing: 12) {
                 // ---- Connection fields ----
                 HStack(spacing: 8) {
-                    TextField("Host / IP", text: $host)
+                    TextField("Subdomain.freehold.lit.app", text: $host)
                         .textFieldStyle(.roundedBorder)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
@@ -34,12 +35,17 @@ struct ContentView: View {
                         } else {
                             client.connect(
                                 host: host,
-                                port: UInt16(port) ?? 8443
+                                port: UInt16(port) ?? 8443,
+                                skipVerify: devMode
                             )
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(host.isEmpty || isConnecting)
+
+                    Toggle("Dev", isOn: $devMode)
+                        .fixedSize()
+                        .font(.caption)
 
                     Spacer()
 

@@ -24,7 +24,7 @@ pip install -r requirements.txt
 ./run.sh --relay freehold.lit.app:9999 --relay-port 55126
 ```
 
-Then open `https://localhost:8443` (local) or `https://<relay-ip>:8443` (relay).
+Then open `https://localhost:8443` (local) or `https://<subdomain>.freehold.lit.app:8443` (relay).
 
 ## API endpoints
 

@@ -83,10 +83,14 @@ pub extern "C" fn ws_client_init() {
 
 /// Connect to a Freehold relay via QUIC/H3 WebSocket.
 ///
+/// `host` is the subdomain hostname (e.g., "abc123.freehold.lit.app"),
+/// used for both DNS resolution and TLS SNI so the ACME cert validates.
+/// Set `skip_verify` to 1 for local/dev mode with self-signed certs.
+///
 /// # Safety
 /// `host` must be a valid null-terminated UTF-8 C string.
 #[no_mangle]
-pub unsafe extern "C" fn ws_client_connect(host: *const c_char, port: u16) -> i32 {
+pub unsafe extern "C" fn ws_client_connect(host: *const c_char, port: u16, skip_verify: i32) -> i32 {
     if host.is_null() {
         return -1;
     }
@@ -118,9 +122,10 @@ pub unsafe extern "C" fn ws_client_connect(host: *const c_char, port: u16) -> i3
 
     let state2 = state.clone();
     let last_error2 = last_error.clone();
+    let dev_mode = skip_verify != 0;
 
     runtime.spawn(async move {
-        if let Err(e) = run_ws_client(&host_str, port, shutdown_rx, send_rx, recv_tx, state2.clone()).await {
+        if let Err(e) = run_ws_client(&host_str, port, dev_mode, shutdown_rx, send_rx, recv_tx, state2.clone()).await {
             warn!("ws session ended: {}", e);
             *last_error2.lock().unwrap() = Some(e.to_string());
             state2.store(FFIConnectionState::Error as u8, Ordering::SeqCst);
@@ -264,16 +269,29 @@ pub unsafe extern "C" fn ws_client_free_string(s: *mut c_char) {
 async fn run_ws_client(
     host: &str,
     port: u16,
+    skip_verify: bool,
     mut shutdown: watch::Receiver<bool>,
     mut send_rx: mpsc::UnboundedReceiver<String>,
     recv_tx: mpsc::UnboundedSender<String>,
     state: Arc<std::sync::atomic::AtomicU8>,
 ) -> anyhow::Result<()> {
-    // ---- TLS config (trust self-signed for dev) ----
-    let crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(SkipVerify))
-        .with_no_client_auth();
+    // ---- TLS config ----
+    // Production: validate the ACME cert against the subdomain (SNI).
+    // Dev/local: skip verification for self-signed certs.
+    let crypto = if skip_verify {
+        info!("TLS: skip verification (dev mode)");
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipVerify))
+            .with_no_client_auth()
+    } else {
+        info!("TLS: validating cert for {}", host);
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+    };
 
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(std::time::Duration::from_secs(10)));

@@ -25,7 +25,7 @@ npm run freehold:local
 npm run freehold
 ```
 
-Then open `https://localhost:8443` (local) or `https://<relay-ip>:8443` (relay).
+Then open `https://localhost:8443` (local) or `https://<subdomain>.freehold.lit.app:8443` (relay).
 
 ## What's in the box
 

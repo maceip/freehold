@@ -28,13 +28,18 @@ public final class WSClient: ObservableObject {
 
     // MARK: - Actions
 
-    public func connect(host: String, port: UInt16) {
+    /// Connect to a Freehold relay.
+    ///
+    /// `host` is the subdomain (e.g., "abc123.freehold.lit.app") — used for
+    /// DNS resolution and TLS SNI so the ACME certificate validates correctly.
+    /// Set `skipVerify` to true only for local dev with self-signed certs.
+    public func connect(host: String, port: UInt16, skipVerify: Bool = false) {
         messages.removeAll()
         lastError = nil
         state = .connecting
 
         host.withCString { hostPtr in
-            let result = ws_client_connect(hostPtr, port)
+            let result = ws_client_connect(hostPtr, port, skipVerify ? 1 : 0)
             if result != 0 {
                 state = .error
                 lastError = "Failed to start connection"
