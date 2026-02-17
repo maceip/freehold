@@ -23,6 +23,99 @@
       min-height: 100vh;
     }
 
+    /* Live banner */
+    .live-banner {
+      background: linear-gradient(135deg, #0a1f12 0%, #0f2818 50%, #0a1f12 100%);
+      border-bottom: 1px solid #1a3325;
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      position: relative;
+      overflow: hidden;
+      max-height: 80px;
+      opacity: 1;
+      transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+                  opacity 0.3s ease,
+                  padding 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+                  border-bottom-width 0.3s ease;
+    }
+
+    .live-banner.dismissed {
+      max-height: 0;
+      opacity: 0;
+      padding: 0 1rem;
+      border-bottom-width: 0;
+    }
+
+    .live-banner::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(0, 255, 136, 0.03) 50%,
+        transparent 100%
+      );
+      animation: shimmer 3s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+      0%, 100% { opacity: 0; }
+      50% { opacity: 1; }
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 1;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+    }
+
+    .live-banner-text {
+      font-size: 0.8125rem;
+      color: var(--fg);
+      position: relative;
+      z-index: 1;
+      opacity: 0.9;
+    }
+
+    .live-banner-text strong {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .live-banner-dismiss {
+      position: absolute;
+      right: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--dim);
+      cursor: pointer;
+      font-size: 1.125rem;
+      line-height: 1;
+      padding: 0.25rem;
+      z-index: 1;
+      transition: color 0.2s ease, transform 0.2s ease;
+    }
+
+    .live-banner-dismiss:hover {
+      color: var(--fg);
+      transform: translateY(-50%) scale(1.1);
+    }
+
     .container {
       max-width: 720px;
       margin: 0 auto;
@@ -138,6 +231,14 @@
   </style>
 </head>
 <body>
+  <div class="live-banner" id="liveBanner">
+    <span class="live-dot"></span>
+    <span class="live-banner-text">
+      <strong>Live on Freehold</strong> &mdash; This site is served through the Freehold network right now. UDP registration, eBPF forwarding, QUIC/H3 proxy &mdash; no tunnel, no cloud.
+    </span>
+    <button class="live-banner-dismiss" onclick="dismissBanner()" aria-label="Dismiss">&times;</button>
+  </div>
+
   <div class="container">
     <h1>Free<span>hold</span></h1>
     <p class="tagline">Public IPs for all your devices</p>
@@ -180,7 +281,7 @@
     </div>
 
     <div class="cta">
-      <a href="https://git.sr.ht/~rpm/freehold">View Source</a>
+      <a href="https://github.com/maceip/freehold">View Source</a>
     </div>
 
     <div class="meta">
@@ -189,8 +290,23 @@
     </div>
 
     <div class="footer">
-      <p><a href="https://git.sr.ht/~rpm/freehold">git.sr.ht/~rpm/freehold</a> · MIT License</p>
+      <p><a href="https://github.com/maceip/freehold">github.com/maceip/freehold</a> · MIT License</p>
     </div>
   </div>
+
+  <script>
+    function dismissBanner() {
+      var banner = document.getElementById('liveBanner');
+      banner.classList.add('dismissed');
+      try { sessionStorage.setItem('freehold-banner-dismissed', '1'); } catch(e) {}
+    }
+    (function() {
+      try {
+        if (sessionStorage.getItem('freehold-banner-dismissed') === '1') {
+          document.getElementById('liveBanner').classList.add('dismissed');
+        }
+      } catch(e) {}
+    })();
+  </script>
 </body>
 </html>
