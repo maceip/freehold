@@ -70,7 +70,7 @@ pub async fn run_service(
     let acme_cache_dir = config
         .acme_cache
         .map(PathBuf::from)
-        .or_else(|| dirs_default_acme_cache());
+        .or_else(dirs_default_acme_cache);
 
     let domain = "localhost";
 
@@ -207,15 +207,12 @@ pub unsafe extern "C" fn scute_poll_event(handle: *mut ScuteHandle) -> *mut std:
     let handle = unsafe { &*handle };
     let mut guard = handle.event_rx.lock().unwrap();
     if let Some(ref mut rx) = *guard {
-        match rx.try_recv() {
-            Ok(event) => {
-                if let Ok(json) = serde_json::to_string(&event) {
-                    return std::ffi::CString::new(json)
-                        .map(|c| c.into_raw())
-                        .unwrap_or(std::ptr::null_mut());
-                }
+        if let Ok(event) = rx.try_recv() {
+            if let Ok(json) = serde_json::to_string(&event) {
+                return std::ffi::CString::new(json)
+                    .map(|c| c.into_raw())
+                    .unwrap_or(std::ptr::null_mut());
             }
-            Err(_) => {}
         }
     }
     std::ptr::null_mut()
