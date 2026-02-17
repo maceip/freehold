@@ -5,11 +5,22 @@
 //!
 //! # Architecture
 //!
+//! When using `Service`, Engine and Quinn share a single UDP socket via
+//! `DemuxSocket`.  Packets with magic byte `0x46` go to Engine; everything
+//! else (QUIC) goes to Quinn.  One port, one registration, zero mux code
+//! in the customer's app.
+//!
 //! ```text
-//! Alice (Browser) --H3/QUIC--> Relay --UDP--> Bob's H3Proxy --HTTP--> Backend
-//!                                              ^
-//!                                              |
-//!                                     Engine (registration)
+//! Alice (Browser) --H3/QUIC--> Relay --UDP--> DemuxSocket
+//!                                                 |
+//!                                     +-----------+-----------+
+//!                                     |                       |
+//!                                 0x46 msgs               QUIC pkts
+//!                                     |                       |
+//!                                  Engine              Quinn/H3Proxy
+//!                                (heartbeat)            (HTTP proxy)
+//!                                     |                       |
+//!                                     +--------> Backend <----+
 //! ```
 
 pub mod state;
@@ -24,8 +35,134 @@ use tracing::{debug, info, warn};
 
 #[cfg(feature = "h3-proxy")]
 pub use freehold_h3_proxy::{
-    generate_self_signed_cert, CertificateDer, H3Proxy, H3ProxyConfig, PrivateKeyDer,
+    generate_self_signed_cert, make_quinn_server_config, serve_h3, CertificateDer, H3Proxy,
+    H3ProxyConfig, PrivateKeyDer,
 };
+
+// ---------------------------------------------------------------------------
+// DemuxSocket — shared UDP socket that filters Freehold protocol from QUIC
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "h3-proxy")]
+mod demux {
+    use std::fmt;
+    use std::io::{self, IoSliceMut};
+    use std::net::SocketAddr;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::task::{Context, Poll, ready};
+
+    use quinn::udp::RecvMeta;
+    use quinn::{AsyncUdpSocket, UdpPoller};
+    use tokio::sync::mpsc;
+
+    /// A UDP socket that filters Freehold protocol messages (magic `0x46`),
+    /// diverting them to the Engine channel while passing QUIC packets to Quinn.
+    pub(crate) struct DemuxSocket {
+        io: Arc<tokio::net::UdpSocket>,
+        freehold_tx: mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>,
+    }
+
+    impl fmt::Debug for DemuxSocket {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("DemuxSocket")
+                .field("local_addr", &self.io.local_addr())
+                .finish()
+        }
+    }
+
+    impl DemuxSocket {
+        pub(crate) fn new(
+            io: Arc<tokio::net::UdpSocket>,
+            freehold_tx: mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>,
+        ) -> Self {
+            Self { io, freehold_tx }
+        }
+    }
+
+    impl AsyncUdpSocket for DemuxSocket {
+        fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
+            let io = self.io.clone();
+            Box::pin(DemuxPoller { io, fut: None })
+        }
+
+        fn try_send(&self, transmit: &quinn::udp::Transmit) -> io::Result<()> {
+            self.io
+                .try_send_to(transmit.contents, transmit.destination)
+                .map(|_| ())
+        }
+
+        fn poll_recv(
+            &self,
+            cx: &mut Context,
+            bufs: &mut [IoSliceMut<'_>],
+            meta: &mut [RecvMeta],
+        ) -> Poll<io::Result<usize>> {
+            loop {
+                ready!(self.io.poll_recv_ready(cx))?;
+                // Receive into caller's buffer, then inspect byte 0
+                match self.io.try_recv_from(&mut bufs[0]) {
+                    Ok((len, addr)) => {
+                        if len > 0 && bufs[0][0] == 0x46 {
+                            // Freehold protocol — send to Engine, keep reading
+                            let _ =
+                                self.freehold_tx.send((bufs[0][..len].to_vec(), addr));
+                            continue;
+                        }
+                        // QUIC packet — return to Quinn
+                        meta[0] = RecvMeta {
+                            addr,
+                            len,
+                            stride: len,
+                            ecn: None,
+                            dst_ip: None,
+                        };
+                        return Poll::Ready(Ok(1));
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(e) => return Poll::Ready(Err(e)),
+                }
+            }
+        }
+
+        fn local_addr(&self) -> io::Result<SocketAddr> {
+            self.io.local_addr()
+        }
+    }
+
+    // -- Poller for write-readiness ------------------------------------------
+
+    struct DemuxPoller {
+        io: Arc<tokio::net::UdpSocket>,
+        #[allow(clippy::type_complexity)]
+        fut: Option<Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + Sync>>>,
+    }
+
+    impl fmt::Debug for DemuxPoller {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("DemuxPoller").finish_non_exhaustive()
+        }
+    }
+
+    impl UdpPoller for DemuxPoller {
+        fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+            let this = self.get_mut();
+            if this.fut.is_none() {
+                let io = this.io.clone();
+                this.fut = Some(Box::pin(async move { io.writable().await }));
+            }
+            let result = this.fut.as_mut().unwrap().as_mut().poll(cx);
+            if result.is_ready() {
+                this.fut = None;
+            }
+            result
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Engine
+// ---------------------------------------------------------------------------
 
 /// Relay connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,13 +217,16 @@ pub struct Engine {
     neighbors: HashSet<Ipv4Addr>,
     status_tx: mpsc::Sender<StatusUpdate>,
     command_rx: Option<mpsc::Receiver<EngineCommand>>,
+    /// When set, Engine receives protocol messages from the DemuxSocket channel
+    /// instead of reading the socket directly.
+    msg_rx: Option<mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>>,
     auto_discover: bool,
     bytes_sent: u64,
     bytes_received: u64,
 }
 
 impl Engine {
-    /// Create a new engine
+    /// Create a new engine (standalone — binds its own socket).
     pub fn new(
         initial_relay: SocketAddr,
         port: u16,
@@ -96,7 +236,48 @@ impl Engine {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         socket.set_nonblocking(true)?;
 
-        Ok(Self {
+        Ok(Self::from_parts(
+            socket,
+            initial_relay,
+            port,
+            auto_discover,
+            status_tx,
+            None,
+        ))
+    }
+
+    /// Create an engine that shares a socket with a DemuxSocket.
+    ///
+    /// `send_socket` is a `try_clone()`-d handle to the same OS socket that
+    /// DemuxSocket reads from.  Engine uses it **only** for sending.
+    /// Incoming Freehold messages arrive via `msg_rx` (fed by DemuxSocket).
+    pub fn new_demuxed(
+        send_socket: UdpSocket,
+        initial_relay: SocketAddr,
+        port: u16,
+        auto_discover: bool,
+        status_tx: mpsc::Sender<StatusUpdate>,
+        msg_rx: mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>,
+    ) -> Self {
+        Self::from_parts(
+            send_socket,
+            initial_relay,
+            port,
+            auto_discover,
+            status_tx,
+            Some(msg_rx),
+        )
+    }
+
+    fn from_parts(
+        socket: UdpSocket,
+        initial_relay: SocketAddr,
+        port: u16,
+        auto_discover: bool,
+        status_tx: mpsc::Sender<StatusUpdate>,
+        msg_rx: Option<mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>>,
+    ) -> Self {
+        Self {
             socket,
             port,
             relays: vec![Relay {
@@ -108,10 +289,11 @@ impl Engine {
             neighbors: HashSet::new(),
             status_tx,
             command_rx: None,
+            msg_rx,
             auto_discover,
             bytes_sent: 0,
             bytes_received: 0,
-        })
+        }
     }
 
     /// Create a new engine with command channel
@@ -132,7 +314,13 @@ impl Engine {
         self.command_rx = Some(rx);
     }
 
-    /// Run the engine (blocking)
+    /// Feed a protocol message from an external demuxer.
+    pub async fn process_incoming(&mut self, data: &[u8], from: SocketAddr) {
+        self.bytes_received += data.len() as u64;
+        self.process(data, from).await;
+    }
+
+    /// Run the engine (blocking).
     pub async fn run(&mut self) -> Result<()> {
         let mut buf = [0u8; 1500];
         let mut last_traffic_update = Instant::now();
@@ -158,10 +346,20 @@ impl Engine {
                 }
             }
 
-            // Process incoming
-            while let Ok((len, from)) = self.socket.recv_from(&mut buf) {
-                self.bytes_received += len as u64;
-                self.process(&buf[..len], from).await;
+            // Process incoming — either from DemuxSocket channel or own socket
+            if self.msg_rx.is_some() {
+                // Demux mode: temporarily take the receiver to avoid borrow conflict
+                let mut rx = self.msg_rx.take().unwrap();
+                while let Ok((data, from)) = rx.try_recv() {
+                    self.bytes_received += data.len() as u64;
+                    self.process(&data, from).await;
+                }
+                self.msg_rx = Some(rx);
+            } else {
+                while let Ok((len, from)) = self.socket.recv_from(&mut buf) {
+                    self.bytes_received += len as u64;
+                    self.process(&buf[..len], from).await;
+                }
             }
 
             // Maintain relays
@@ -368,6 +566,10 @@ impl Engine {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Service — one-call setup: Engine + H3 Proxy on a single shared socket
+// ---------------------------------------------------------------------------
+
 /// Configuration for exposing a local service through Freehold.
 #[cfg(feature = "h3-proxy")]
 #[derive(Debug)]
@@ -376,7 +578,7 @@ pub struct ServiceConfig {
     pub relay: SocketAddr,
     /// Port to claim on the relay (where Alice connects).
     pub relay_port: u16,
-    /// Local address to bind H3 server (should match where relay forwards).
+    /// Local address to bind the shared socket.
     pub h3_bind: SocketAddr,
     /// Local HTTP backend to proxy to.
     pub backend: SocketAddr,
@@ -388,45 +590,81 @@ pub struct ServiceConfig {
     pub auto_discover: bool,
 }
 
-/// A complete Freehold service: registration + H3 proxy.
+/// A complete Freehold service: registration + H3 proxy on a shared socket.
+///
+/// Internally uses a `DemuxSocket` so that Engine and Quinn share one OS
+/// socket.  Packets with magic byte `0x46` go to Engine; everything else
+/// (QUIC) goes to Quinn.  The customer writes `Service::new(config)` +
+/// `service.run()` and it just works.
 #[cfg(feature = "h3-proxy")]
 pub struct Service {
-    engine: Engine,
-    proxy: H3Proxy,
+    config: ServiceConfig,
+    status_tx: mpsc::Sender<StatusUpdate>,
 }
 
 #[cfg(feature = "h3-proxy")]
 impl Service {
     /// Create a new service from config.
     pub fn new(config: ServiceConfig, status_tx: mpsc::Sender<StatusUpdate>) -> Result<Self> {
-        let engine = Engine::new(
-            config.relay,
-            config.relay_port,
-            config.auto_discover,
-            status_tx,
-        )?;
-
-        let proxy = H3Proxy::new(H3ProxyConfig {
-            bind_addr: config.h3_bind,
-            backend: config.backend,
-            certs: config.certs,
-            key: config.key,
-        });
-
-        Ok(Self { engine, proxy })
+        Ok(Self { config, status_tx })
     }
 
-    /// Run both the registration engine and H3 proxy.
-    pub async fn run(mut self, shutdown: tokio::sync::watch::Receiver<bool>) -> Result<()> {
-        let proxy_shutdown = shutdown.clone();
+    /// Run the service — binds a single shared socket, wires up DemuxSocket,
+    /// and runs Engine + H3 proxy concurrently.
+    pub async fn run(self, shutdown: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+        use std::sync::Arc;
 
-        // Run both concurrently
+        // 1. Bind ONE UDP socket
+        let std_socket = UdpSocket::bind(self.config.h3_bind)?;
+        std_socket.set_nonblocking(true)?;
+
+        // Clone the FD — Engine uses this handle for sending only
+        let engine_send_socket = std_socket.try_clone()?;
+
+        // 2. Convert to tokio and create DemuxSocket + channel
+        let tokio_socket = Arc::new(
+            tokio::net::UdpSocket::from_std(std_socket)
+                .map_err(|e| anyhow::anyhow!("tokio socket: {}", e))?,
+        );
+        let (freehold_tx, freehold_rx) = mpsc::unbounded_channel();
+        let demux_socket = Arc::new(demux::DemuxSocket::new(tokio_socket, freehold_tx));
+
+        // 3. Build Quinn endpoint on the DemuxSocket
+        let server_config = make_quinn_server_config(self.config.certs, self.config.key)?;
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            demux_socket,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .map_err(|e| anyhow::anyhow!("quinn endpoint: {}", e))?;
+
+        let local_addr = endpoint.local_addr()?;
+        info!(
+            "Service on {} (Engine + H3) -> backend {}",
+            local_addr, self.config.backend
+        );
+
+        // 4. Create Engine in demux mode (sends via cloned FD, receives via channel)
+        let mut engine = Engine::new_demuxed(
+            engine_send_socket,
+            self.config.relay,
+            self.config.relay_port,
+            self.config.auto_discover,
+            self.status_tx,
+            freehold_rx,
+        );
+
+        // 5. Run Engine + H3 accept loop concurrently
+        let proxy_shutdown = shutdown.clone();
+        let backend = self.config.backend;
+
         tokio::select! {
-            result = self.engine.run() => {
+            result = engine.run() => {
                 info!("Engine stopped: {:?}", result);
                 result
             }
-            result = self.proxy.run(proxy_shutdown) => {
+            result = serve_h3(endpoint, backend, proxy_shutdown) => {
                 info!("H3 proxy stopped: {:?}", result);
                 result
             }

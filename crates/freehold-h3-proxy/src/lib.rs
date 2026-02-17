@@ -55,26 +55,13 @@ impl H3Proxy {
         Self { config }
     }
 
-    /// Run the proxy until shutdown is signaled.
-    pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<()> {
+    /// Run the proxy until shutdown is signaled (standalone mode — creates its own endpoint).
+    pub async fn run(self, shutdown: watch::Receiver<bool>) -> Result<()> {
         // Install crypto provider
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        // TLS config
-        let mut tls_config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(self.config.certs, self.config.key)
-            .context("TLS config")?;
+        let server_config = make_quinn_server_config(self.config.certs, self.config.key)?;
 
-        tls_config.alpn_protocols = vec![b"h3".to_vec()];
-        tls_config.max_early_data_size = u32::MAX;
-
-        // QUIC config
-        let quic_config = QuicServerConfig::try_from(tls_config)
-            .map_err(|e| anyhow::anyhow!("QUIC config: {}", e))?;
-        let server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_config));
-
-        // Bind
         let endpoint = quinn::Endpoint::server(server_config, self.config.bind_addr)
             .context("bind endpoint")?;
 
@@ -83,33 +70,60 @@ impl H3Proxy {
             self.config.bind_addr, self.config.backend
         );
 
-        // Accept loop
-        loop {
-            tokio::select! {
-                _ = shutdown.changed() => {
-                    if *shutdown.borrow() {
-                        info!("H3 proxy shutting down");
-                        break;
-                    }
+        serve_h3(endpoint, self.config.backend, shutdown).await
+    }
+}
+
+/// Build a Quinn `ServerConfig` from TLS cert/key for H3.
+pub fn make_quinn_server_config(
+    certs: Vec<rustls::pki_types::CertificateDer<'static>>,
+    key: rustls::pki_types::PrivateKeyDer<'static>,
+) -> Result<quinn::ServerConfig> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut tls_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("TLS config")?;
+
+    tls_config.alpn_protocols = vec![b"h3".to_vec()];
+    tls_config.max_early_data_size = u32::MAX;
+
+    let quic_config = QuicServerConfig::try_from(tls_config)
+        .map_err(|e| anyhow::anyhow!("QUIC config: {}", e))?;
+    Ok(quinn::ServerConfig::with_crypto(Arc::new(quic_config)))
+}
+
+/// Accept H3 connections on a pre-built Quinn endpoint and proxy to backend.
+pub async fn serve_h3(
+    endpoint: quinn::Endpoint,
+    backend: SocketAddr,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<()> {
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    info!("H3 proxy shutting down");
+                    break;
                 }
-                incoming = endpoint.accept() => {
-                    if let Some(conn) = incoming {
-                        let backend = self.config.backend;
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_connection(conn, backend).await {
-                                debug!("Connection error: {:?}", e);
-                            }
-                        });
-                    } else {
-                        break;
-                    }
+            }
+            incoming = endpoint.accept() => {
+                if let Some(conn) = incoming {
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_connection(conn, backend).await {
+                            debug!("Connection error: {:?}", e);
+                        }
+                    });
+                } else {
+                    break;
                 }
             }
         }
-
-        endpoint.close(0u32.into(), b"shutdown");
-        Ok(())
     }
+
+    endpoint.close(0u32.into(), b"shutdown");
+    Ok(())
 }
 
 async fn handle_connection(incoming: quinn::Incoming, backend: SocketAddr) -> Result<()> {

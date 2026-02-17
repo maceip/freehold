@@ -18,9 +18,12 @@ anyhow.workspace = true
 tracing.workspace = true
 rand = "0.9"
 
+# Shared socket (DemuxSocket)
+quinn = { version = "0.11", optional = true }
+
 [features]
 default = ["h3-proxy"]
-h3-proxy = ["freehold-h3-proxy"]
+h3-proxy = ["freehold-h3-proxy", "quinn"]
 
 [dev-dependencies]
 proptest = "1.5"

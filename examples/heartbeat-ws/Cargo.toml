@@ -1,0 +1,18 @@
+[package]
+name = "heartbeat-ws"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "WebSocket heartbeat server — sends {ts, seq} every second, echoes messages"
+
+[dependencies]
+freehold-client-core = { path = "../../crates/freehold-client-core" }
+
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
