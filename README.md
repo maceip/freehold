@@ -195,6 +195,8 @@ End-to-end examples in [`examples/`](examples/):
 
 - **[`heartbeat-ws`](examples/heartbeat-ws/)** — Rust WebSocket server that sends `{"ts", "seq"}` heartbeats every second. Runs behind Freehold's H3 proxy using `Service` (DemuxSocket under the hood).
 - **[`android-ws-client`](examples/android-ws-client/)** — Android Compose app using Cronet HTTP/3 to connect to the heartbeat server through Freehold.
+- **[`nextjs-app`](examples/nextjs-app/)** — Next.js app with API routes, exposed through Freehold's H3 proxy. Zero changes to Next.js code.
+- **[`python-backend`](examples/python-backend/)** — Flask API backend exposed through Freehold. Includes health check, time, and echo endpoints.
 
 ```bash
 # Run the heartbeat server locally
@@ -220,7 +222,9 @@ freehold/
 │   └── freehold-e2e-tests/     # Integration tests
 ├── examples/
 │   ├── heartbeat-ws/           # WebSocket heartbeat server
-│   └── android-ws-client/      # Android Cronet H3 client
+│   ├── android-ws-client/      # Android Cronet H3 client
+│   ├── nextjs-app/             # Next.js frontend + API routes
+│   └── python-backend/         # Flask API backend
 ├── platforms/
 │   ├── macos/                  # Swift menu bar app
 │   ├── windows/                # C# system tray

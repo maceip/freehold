@@ -64,3 +64,27 @@ will stream in over WebSocket-over-H3.
 cd examples/android-ws-client
 ./gradlew :app:assembleDebug
 ```
+
+## `nextjs-app` — Next.js frontend + API routes
+
+A full Next.js app exposed through Freehold's H3 proxy. Includes a React
+client that calls API routes (`/api/time`, `/api/hello`).
+
+```sh
+cd examples/nextjs-app
+npm install
+npm run freehold:local   # local mode
+npm run freehold         # with relay
+```
+
+## `python-backend` — Flask API backend
+
+A minimal Python backend (Flask) exposed through Freehold. Includes health
+check, time, and echo endpoints.
+
+```sh
+cd examples/python-backend
+pip install -r requirements.txt
+./run.sh                                           # local mode
+./run.sh --relay freehold.lit.app:9999 --relay-port 55126  # with relay
+```

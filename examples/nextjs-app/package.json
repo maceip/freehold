@@ -1,0 +1,20 @@
+{
+  "name": "freehold-nextjs-example",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "freehold": "concurrently \"next dev -p 3000\" \"freehold --relay freehold.lit.app:9999 --port 8443 --backend 127.0.0.1:3000 --headless\"",
+    "freehold:local": "concurrently \"next dev -p 3000\" \"freehold --local --port 8443 --backend 127.0.0.1:3000\""
+  },
+  "dependencies": {
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "concurrently": "^9"
+  }
+}
