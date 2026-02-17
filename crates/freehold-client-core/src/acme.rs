@@ -1,9 +1,12 @@
 //! ACME certificate management via DNS-01 challenge.
 //!
 //! Obtains a multi-SAN certificate covering three FQDNs per registration:
-//! - `{hash}.{zone}` — primary domain (SVCB-racing browsers use this)
-//! - `{hash}.relay.{zone}` — explicit relay path for SDK clients
-//! - `{hash}.home.{zone}` — explicit direct/home path for SDK clients
+//! - `{hash}.{zone}` — primary domain (A → relay IP, two SVCB records for racing)
+//! - `{hash}.relay.{zone}` — relay path (A → relay IP, guaranteed to work)
+//! - `{hash}.home.{zone}` — direct path (A → server's real public IP from UDP registration)
+//!
+//! The `.home` A record contains the server's actual public IP, allowing
+//! clients to probe it directly and open their NAT for direct responses.
 //!
 //! The client drives the entire ACME flow:
 //! 1. Wait for subdomain hash assignment from relay

@@ -7,11 +7,16 @@
 //!
 //! Each registration creates records for three names:
 //!
-//! | Name | Records | Purpose |
-//! |------|---------|---------|
-//! | `{hash}` | A (relay) + 2x HTTPS (relay, home) | SVCB-racing for browsers |
-//! | `{hash}.relay` | A + HTTPS (relay only) | Explicit relay path for SDK clients |
-//! | `{hash}.home` | A + HTTPS (home only) | Explicit direct path for SDK clients |
+//! | Name | A record | HTTPS/SVCB | Purpose |
+//! |------|----------|------------|---------|
+//! | `{hash}` | relay IP | 2 records: relay + home ipv4hints | SVCB-racing for browsers |
+//! | `{hash}.relay` | relay IP | relay only | Guaranteed relay path for SDK clients |
+//! | `{hash}.home` | **server's real IP** | home only | Direct path, bypasses relay |
+//!
+//! The `.home` A record contains the **server's real public IP** — the UDP
+//! source address from the registration packet. This is how clients learn
+//! the server's actual address and can probe it directly to open their NAT
+//! for the server's direct responses.
 //!
 //! SVCB-aware browsers (Chrome, Edge) race both HTTPS endpoints on the
 //! primary domain automatically. SDK clients can use `.relay` or `.home`

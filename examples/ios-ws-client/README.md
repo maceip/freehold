@@ -74,11 +74,16 @@ The Rust crate exports these C functions (auto-generated header):
 The app includes a **path selector** (Auto / Relay / Direct) that
 demonstrates Freehold's dual-path DNS:
 
-| Path | FQDN | Behavior |
-|------|------|----------|
-| Auto (SVCB) | `<hash>.freehold.lit.app` | Races relay + direct, picks fastest |
-| Relay | `<hash>.relay.freehold.lit.app` | Always via relay (works behind any NAT) |
-| Direct | `<hash>.home.freehold.lit.app` | Direct to server (permissive NAT only) |
+| Path | FQDN | A record | Behavior |
+|------|------|----------|----------|
+| Auto (SVCB) | `<hash>.freehold.lit.app` | relay IP | Races relay + direct, picks fastest |
+| Relay | `<hash>.relay.freehold.lit.app` | relay IP | Always via relay (works behind any NAT) |
+| Direct | `<hash>.home.freehold.lit.app` | **server's real IP** | Direct to server (bypasses relay) |
+
+The `.home` A record contains the server's actual public IP address — the
+relay learns this from the UDP registration source address. When you select
+"Direct", the app connects straight to the server's real IP, bypassing the
+relay entirely. This only works if the server's NAT allows inbound connections.
 
 Enter just the subdomain hash (e.g. `a7xk2m`) and the app constructs
 the full FQDN based on the selected path. Use "Auto" for production —

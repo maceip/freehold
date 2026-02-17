@@ -75,7 +75,13 @@ The Confirm message supports optional trailing action bytes for DNS/ACME operati
 | `ClearTxt` | `0x02` | `[0x00]` | Clear ACME TXT records (all three names) |
 | `CreateRecords` | `0x03` | `[0x00]` | Request dual-path DNS records (SVCB + relay/home) |
 
-`CreateRecords` requires the client to already be registered in the eBPF map (proving reachability). DNS records are not created during initial registration. The relay creates records for three FQDNs: primary (with SVCB racing), `.relay` (explicit relay path), and `.home` (explicit direct path).
+`CreateRecords` requires the client to already be registered in the eBPF map (proving reachability). DNS records are not created during initial registration. The relay creates records for three FQDNs:
+
+| FQDN | A record | Purpose |
+|------|----------|---------|
+| `{hash}.{zone}` | relay IP | Primary — two SVCB records for browser racing (relay + direct) |
+| `{hash}.relay.{zone}` | relay IP | Guaranteed relay path |
+| `{hash}.home.{zone}` | **server's real IP** | Direct path — the server's public IP from the UDP source address |
 
 ## Timing Constants
 

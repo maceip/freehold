@@ -140,9 +140,17 @@ Set both `acme_cache_dir` and `dns_zone` to enable. The ACME task runs in the ba
 5. Runs DNS-01 flow sequentially per authorization (each domain has its own challenge token)
 6. Hot-swaps the multi-SAN cert into the running QUIC endpoint (zero downtime)
 
-The three FQDNs enable dual-path connectivity: SVCB-aware browsers race the relay
-and direct paths on the primary domain, while SDK clients can use `.relay` or `.home`
-for explicit control.
+The three FQDNs enable dual-path connectivity:
+
+| FQDN | A record points to | Purpose |
+|------|--------------------|---------|
+| `{hash}.{zone}` | relay IP | Primary — two SVCB records let browsers race relay + direct |
+| `{hash}.relay.{zone}` | relay IP | Guaranteed relay path for SDK clients |
+| `{hash}.home.{zone}` | **server's real public IP** | Direct path — bypasses relay entirely |
+
+The `.home` A record contains the server's real public IP (the UDP source address
+from registration). This is how SDK clients discover the server's actual address
+and can probe it to open their NAT for direct responses.
 
 Monitor via `StatusUpdate::SubdomainAssigned` and `StatusUpdate::AcmeCertReady`.
 

@@ -34,15 +34,16 @@ Then open `https://localhost:8443` (local) or `https://<hash>.freehold.lit.app:8
 
 With `freehold:acme`, Freehold creates three DNS records for your server:
 
-| FQDN | Purpose |
-|------|---------|
-| `<hash>.freehold.lit.app` | Primary — browsers race relay + direct via SVCB |
-| `<hash>.relay.freehold.lit.app` | Explicit relay path (always works) |
-| `<hash>.home.freehold.lit.app` | Explicit direct path (lowest latency) |
+| FQDN | A record | Purpose |
+|------|----------|---------|
+| `<hash>.freehold.lit.app` | relay IP | Primary — browsers race relay + direct via SVCB |
+| `<hash>.relay.freehold.lit.app` | relay IP | Guaranteed relay path (always works) |
+| `<hash>.home.freehold.lit.app` | **your server's real IP** | Direct path (lowest latency) |
 
-SVCB-aware browsers (Chrome, Edge) automatically race both paths on the
-primary domain. If you're behind permissive NAT or have a public IP, the
-browser connects directly — zero relay involvement.
+The `.home` record contains your server's actual public IP address (learned
+from the UDP registration). SVCB-aware browsers (Chrome, Edge) automatically
+race both paths on the primary domain. If you're behind permissive NAT or
+have a public IP, the browser connects directly — zero relay involvement.
 
 ## What's in the box
 
