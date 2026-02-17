@@ -1,9 +1,9 @@
-import socket,struct,random
+import socket,struct,random,os
 def stun(srv,pt):
     s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     s.settimeout(3)
     s.bind(("0.0.0.0",pt))
-    s.sendto(struct.pack(">HHI",1,0,0x2112A442)+random.randbytes(12),srv)
+    s.sendto(struct.pack(">HHI",1,0,0x2112A442)+os.urandom(12),srv)
     d,_=s.recvfrom(1024)
     s.close()
     p=20
