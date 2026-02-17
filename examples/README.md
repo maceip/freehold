@@ -75,28 +75,74 @@ When `acme_cache_dir` is set, this all happens automatically in the
 background. On restart, cached certs load in milliseconds — no round-trip
 to Let's Encrypt unless the cert is expiring.
 
-### Dual-path DNS: how SVCB racing works
+### Dual-path DNS: how the phone learns Bob's real IP
+
+When Bob registers, the relay sees Bob's public IP as the UDP source
+address. When Bob sends `CreateRecords`, the relay creates DNS records
+using **both** IPs:
+
+| DNS name | A record | Who uses it |
+|----------|----------|-------------|
+| `a7xk2m.relay.freehold.lit.app` | `142.248.222.1` (relay) | Guaranteed path — XDP forwards to Bob |
+| `a7xk2m.home.freehold.lit.app` | `176.2.178.102` (Bob's real IP) | Direct path — skips relay entirely |
+| `a7xk2m.freehold.lit.app` | relay IP + two SVCB records | Browsers race both paths |
+
+This is the key: **the `.home` A record contains Bob's real public IP,
+not the relay's.** The relay knows this IP because Bob sent it a UDP
+packet — the source address is Bob's NAT-mapped public endpoint.
+
+### How a phone uses this
+
+1. **Phone resolves DNS.** It gets two IPs: the relay (from `.relay`)
+   and Bob's real IP (from `.home`).
+
+2. **Phone connects via relay.** Sends QUIC to
+   `a7xk2m.relay.freehold.lit.app:8443`. This always works — the
+   relay's XDP rewrites the destination to Bob.
+
+3. **Phone probes Bob directly.** Simultaneously, the phone sends a
+   UDP packet to Bob's real IP (from the `.home` A record). This
+   packet probably gets dropped by Bob's NAT, but it opens the
+   **phone's own NAT** — the phone's router now expects replies from
+   Bob's IP.
+
+4. **Bob responds directly.** When Bob's response arrives (from Bob's
+   real IP, not the relay's), the phone's NAT lets it through because
+   step 3 opened the mapping. QUIC doesn't care that the source IP
+   changed — it uses connection IDs, not IP tuples.
+
+5. **Relay drops out.** After the first direct response succeeds, all
+   subsequent packets flow directly between phone and Bob. The relay
+   is no longer in the path.
+
+If Bob is behind CGNAT or restrictive NAT, the direct probe in step 3
+fails silently. The relay path keeps working. No fallback logic needed
+— the phone just never gets a direct response, so all traffic stays
+on the relay path.
+
+### SVCB racing (browsers)
 
 SVCB-aware browsers (Chrome, Edge) see two HTTPS records on the primary
-domain — one pointing to the relay, one pointing directly to Bob's home
-IP. The browser **races** both connections and uses whichever responds
-first. This means:
+domain — one pointing to the relay, one pointing to Bob's home IP. The
+browser **races** both connections and uses whichever responds first:
 
-- If Bob is behind permissive NAT (or has a public IP), the browser
-  connects directly — zero relay involvement, lowest latency.
-- If Bob is behind CGNAT or restrictive NAT, the direct path fails
-  silently and the relay path wins. The relay's Punch message opens
-  the NAT hole, and QUIC retransmission covers the delay.
-- Legacy browsers that don't support SVCB fall back to the A record
-  (relay IP), which always works.
+- If Bob has a public IP or permissive NAT → direct path wins, zero
+  relay involvement
+- If Bob is behind CGNAT → direct path fails silently, relay path wins
+- Legacy browsers without SVCB → fall back to A record (relay), always
+  works
 
-SDK clients that want explicit control can connect to
-`a7xk2m.relay.freehold.lit.app` (always via relay) or
-`a7xk2m.home.freehold.lit.app` (direct to Bob). This is useful for
-testing, debugging, or when you know the NAT situation.
+### SDK clients
 
-Clients connect using the subdomain (`https://a7xk2m.freehold.lit.app:8443`),
-which gives them correct TLS SNI matching. No certificate warnings.
+SDK clients that want explicit control can connect to:
+- `a7xk2m.relay.freehold.lit.app` — always via relay (guaranteed)
+- `a7xk2m.home.freehold.lit.app` — direct to Bob (may fail if NATted)
+
+This is useful for testing, debugging, or when you know the NAT
+situation on both sides.
+
+All three names are covered by the same multi-SAN TLS certificate.
+No certificate warnings regardless of which path the client takes.
 
 ### What about HTTP and WebSocket?
 
@@ -333,10 +379,10 @@ Bob → Relay:  [0x46, 0x03, 0x20, 0xFB, cookie..., 0x03, 0x00]
                magic  CONF  port 8443   cookie     CREATE len=0
 ```
 
-DNS records created:
-- `a7xk2m.freehold.lit.app` → relay IP + SVCB (relay + home)
-- `a7xk2m.relay.freehold.lit.app` → relay path only
-- `a7xk2m.home.freehold.lit.app` → direct/home path only
+DNS records created (the ranger uses Bob's real address for the home sign):
+- `a7xk2m.relay.freehold.lit.app` A → **142.248.222.1** (the park's address)
+- `a7xk2m.home.freehold.lit.app` A → **176.2.178.102** (Bob's real apartment building)
+- `a7xk2m.freehold.lit.app` A → park IP + SVCB records for both paths
 
 ### 6. Bob gets a real name tag (ACME)
 
@@ -371,19 +417,35 @@ Bob → Relay:  [0x46, 0x04, 0x20, 0xFB]
                magic  BEAT  port 8443
 ```
 
-### 8. Alice shows up (QUIC)
+### 8. Alice shows up (QUIC + dual-path)
 
 > *"Hi, is Bob here?" (Alice doesn't know any of this happened)*
 
-Alice's browser sends QUIC to `a7xk2m.freehold.lit.app:8443`. The
-XDP kernel program rewrites the destination to Bob's real IP. Alice's
-source IP is preserved. Bob responds directly to Alice. The relay is
-out of the loop. Alice sees a valid Let's Encrypt cert. Everyone is happy.
+Alice resolves `a7xk2m.freehold.lit.app` and gets two paths: the park
+(relay at 142.248.222.1) and Bob's real building (176.2.178.102).
 
+**Via the park (relay) — always works:**
 ```
 Alice → Relay:  QUIC ClientHello to port 8443
-Kernel:         rewrites dst_ip → Bob's IP (XDP, wire speed)
+Kernel:         rewrites dst_ip → Bob's real IP (XDP, wire speed)
 Bob → Alice:    QUIC ServerHello directly back (bypasses relay)
 ```
+
+**Meanwhile, Alice probes Bob's building directly:**
+```
+Alice → Bob:    UDP packet to 176.2.178.102:8443 (from .home A record)
+                Bob's NAT drops it, BUT Alice's NAT now expects replies
+                from Bob's IP. When Bob responds directly (above), Alice's
+                NAT lets it through.
+```
+
+If Alice is a phone app (SDK client), she resolves `.home` to get
+Bob's real IP and sends a probe packet. This opens her NAT for Bob's
+direct responses. If Alice is a browser, SVCB racing does this
+automatically — the browser tries both the relay and Bob's IP, and
+the first response wins.
+
+Either way, after the first successful exchange, the relay is out of
+the picture. Alice and Bob talk directly.
 
 Alice pets Bob. Bob wags. The end.
