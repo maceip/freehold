@@ -156,7 +156,11 @@ jobs:
             "os": ["${{ matrix.npm-os }}"],
             "cpu": ["${{ matrix.npm-cpu }}"],
             "files": ["bin/"],
-            "license": "MIT"
+            "license": "MIT",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/maceip/freehold"
+            }
           }
           EOF
 
@@ -238,7 +242,11 @@ jobs:
             "os": ["android"],
             "cpu": ["${{ matrix.npm-cpu }}"],
             "files": ["lib/"],
-            "license": "MIT"
+            "license": "MIT",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/maceip/freehold"
+            }
           }
           EOF
 
@@ -334,7 +342,11 @@ jobs:
             "os": ["darwin"],
             "cpu": ["arm64"],
             "files": ["lib/"],
-            "license": "MIT"
+            "license": "MIT",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/maceip/freehold"
+            }
           }
           EOF
 
