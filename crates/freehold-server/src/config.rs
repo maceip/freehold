@@ -39,6 +39,10 @@ pub struct Config {
     /// Logging configuration
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    /// DNS management for ACME challenges
+    #[serde(default)]
+    pub dns: DnsConfig,
 }
 
 /// Anycast IP block configuration
@@ -88,6 +92,49 @@ pub struct LoggingConfig {
     /// Log format: "pretty", "json", or "compact"
     #[serde(default = "default_log_format")]
     pub format: String,
+}
+
+/// DNS management configuration for ACME DNS-01 challenges
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsConfig {
+    /// Enable DNS record management
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// DNS zone name
+    #[serde(default = "default_dns_zone")]
+    pub zone: String,
+
+    /// Path to knotc binary
+    #[serde(default = "default_knotc_path")]
+    pub knotc_path: String,
+
+    /// Minimum seconds between TXT updates per port
+    #[serde(default = "default_txt_rate_limit_secs")]
+    pub txt_rate_limit_secs: u64,
+}
+
+impl Default for DnsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            zone: default_dns_zone(),
+            knotc_path: default_knotc_path(),
+            txt_rate_limit_secs: default_txt_rate_limit_secs(),
+        }
+    }
+}
+
+fn default_dns_zone() -> String {
+    "freehold.lit.app".to_string()
+}
+
+fn default_knotc_path() -> String {
+    "/usr/sbin/knotc".to_string()
+}
+
+fn default_txt_rate_limit_secs() -> u64 {
+    300
 }
 
 fn default_port() -> u16 {
@@ -215,6 +262,19 @@ filter = "freehold_server=debug"
 
 # Log format: "pretty", "json", or "compact"
 format = "pretty"
+
+[dns]
+# Enable DNS record management for ACME DNS-01 challenges
+enabled = false
+
+# DNS zone name
+zone = "freehold.lit.app"
+
+# Path to knotc binary
+knotc_path = "/usr/sbin/knotc"
+
+# Minimum seconds between TXT updates per port (default: 300 = 5 min)
+txt_rate_limit_secs = 300
 "#
         .to_string()
     }

@@ -206,6 +206,7 @@ struct Relay {
     addr: SocketAddr,
     state: RelayState,
     cookie: Option<[u8; COOKIE_SIZE]>,
+    subdomain: Option<String>,
     last_activity: Instant,
 }
 
@@ -284,6 +285,7 @@ impl Engine {
                 addr: initial_relay,
                 state: RelayState::Disconnected,
                 cookie: None,
+                subdomain: None,
                 last_activity: Instant::now() - timing::HEARTBEAT_INTERVAL,
             }],
             neighbors: HashSet::new(),
@@ -453,6 +455,7 @@ impl Engine {
             let msg = Message::Confirm {
                 port: self.port,
                 cookie,
+                action: freehold_api::ConfirmAction::None,
             };
             let data = msg.to_bytes();
             let addr = self.relays[idx].addr;
@@ -498,7 +501,10 @@ impl Engine {
                 self.send_confirm(idx);
             }
 
-            Message::Neighbors { addrs } => {
+            Message::Neighbors { addrs, subdomain } => {
+                if subdomain.is_some() {
+                    self.relays[idx].subdomain = subdomain;
+                }
                 if self.relays[idx].state == RelayState::Pending {
                     self.relays[idx].state = RelayState::Connected;
                     info!("CONNECTED to {} for port {}", from, self.port);
@@ -519,6 +525,7 @@ impl Engine {
                                     addr: new_addr,
                                     state: RelayState::Disconnected,
                                     cookie: None,
+                                    subdomain: None,
                                     last_activity: Instant::now() - timing::HEARTBEAT_INTERVAL,
                                 });
                                 let _ = self

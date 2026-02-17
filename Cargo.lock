@@ -881,6 +881,7 @@ dependencies = [
  "aya-log",
  "bytes",
  "clap",
+ "data-encoding",
  "freehold-api",
  "freehold-client-core",
  "freehold-common",

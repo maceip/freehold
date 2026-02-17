@@ -83,6 +83,20 @@ pub enum ProtocolError {
     InvalidCookie,
 }
 
+/// Action to perform with a Confirm message (DNS ACME support)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmAction {
+    /// No action (standard registration confirm)
+    None,
+    /// Set a TXT record for ACME DNS-01 challenge
+    SetTxt(Vec<u8>),
+    /// Clear the TXT record
+    ClearTxt,
+}
+
+/// Maximum length of ACME challenge token data
+pub const MAX_TXT_DATA_LEN: usize = 255;
+
 /// Parsed protocol message
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -99,13 +113,17 @@ pub enum Message {
     Confirm {
         port: u16,
         cookie: [u8; COOKIE_SIZE],
+        action: ConfirmAction,
     },
 
     /// Client -> Server: Keep registration alive
     Heartbeat { port: u16 },
 
     /// Server -> Client: List of neighbor relay IPs
-    Neighbors { addrs: Vec<Ipv4Addr> },
+    Neighbors {
+        addrs: Vec<Ipv4Addr>,
+        subdomain: Option<String>,
+    },
 
     /// Server -> Client: NAT hole-punch request (send UDP to this addr)
     Punch { addr: SocketAddr },
@@ -159,7 +177,45 @@ impl Message {
                 cookie.copy_from_slice(&data[4..4 + COOKIE_SIZE]);
                 Ok(match msg_type {
                     MessageType::Challenge => Message::Challenge { port, cookie },
-                    MessageType::Confirm => Message::Confirm { port, cookie },
+                    MessageType::Confirm => {
+                        let action = if data.len() > 4 + COOKIE_SIZE {
+                            let action_byte = data[4 + COOKIE_SIZE];
+                            match action_byte {
+                                0x01 => {
+                                    // SetTxt: need at least action + len bytes
+                                    if data.len() < 4 + COOKIE_SIZE + 2 {
+                                        return Err(ProtocolError::TooShort {
+                                            expected: 4 + COOKIE_SIZE + 2,
+                                            actual: data.len(),
+                                        });
+                                    }
+                                    let txt_len = data[4 + COOKIE_SIZE + 1] as usize;
+                                    if data.len() < 4 + COOKIE_SIZE + 2 + txt_len {
+                                        return Err(ProtocolError::TooShort {
+                                            expected: 4 + COOKIE_SIZE + 2 + txt_len,
+                                            actual: data.len(),
+                                        });
+                                    }
+                                    let txt_data = data[4 + COOKIE_SIZE + 2..4 + COOKIE_SIZE + 2 + txt_len].to_vec();
+                                    ConfirmAction::SetTxt(txt_data)
+                                }
+                                0x02 => {
+                                    // ClearTxt: need action + len (len must be 0)
+                                    if data.len() < 4 + COOKIE_SIZE + 2 {
+                                        return Err(ProtocolError::TooShort {
+                                            expected: 4 + COOKIE_SIZE + 2,
+                                            actual: data.len(),
+                                        });
+                                    }
+                                    ConfirmAction::ClearTxt
+                                }
+                                _ => ConfirmAction::None,
+                            }
+                        } else {
+                            ConfirmAction::None
+                        };
+                        Message::Confirm { port, cookie, action }
+                    }
                     _ => unreachable!(),
                 })
             }
@@ -203,7 +259,18 @@ impl Message {
                         )
                     })
                     .collect();
-                Ok(Message::Neighbors { addrs })
+                let addr_end = 3 + count * 4;
+                let subdomain = if data.len() > addr_end {
+                    let sub_len = data[addr_end] as usize;
+                    if data.len() >= addr_end + 1 + sub_len && sub_len > 0 {
+                        String::from_utf8(data[addr_end + 1..addr_end + 1 + sub_len].to_vec()).ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                Ok(Message::Neighbors { addrs, subdomain })
             }
         }
     }
@@ -224,10 +291,22 @@ impl Message {
                 buf
             }
 
-            Message::Confirm { port, cookie } => {
+            Message::Confirm { port, cookie, action } => {
                 let mut buf = vec![MAGIC, MessageType::Confirm as u8, 0, 0];
                 BigEndian::write_u16(&mut buf[2..4], *port);
                 buf.extend_from_slice(cookie);
+                match action {
+                    ConfirmAction::None => {}
+                    ConfirmAction::SetTxt(data) => {
+                        buf.push(0x01);
+                        buf.push(data.len() as u8);
+                        buf.extend_from_slice(data);
+                    }
+                    ConfirmAction::ClearTxt => {
+                        buf.push(0x02);
+                        buf.push(0x00);
+                    }
+                }
                 buf
             }
 
@@ -250,11 +329,16 @@ impl Message {
                 buf
             }
 
-            Message::Neighbors { addrs } => {
+            Message::Neighbors { addrs, subdomain } => {
                 let count = addrs.len().min(MAX_NEIGHBORS) as u8;
                 let mut buf = vec![MAGIC, MessageType::Neighbors as u8, count];
                 for addr in addrs.iter().take(count as usize) {
                     buf.extend_from_slice(&addr.octets());
+                }
+                if let Some(ref sub) = subdomain {
+                    let sub_bytes = sub.as_bytes();
+                    buf.push(sub_bytes.len() as u8);
+                    buf.extend_from_slice(sub_bytes);
                 }
                 buf
             }
@@ -329,10 +413,10 @@ mod tests {
     #[test]
     fn roundtrip_confirm() {
         let cookie = [0xAB; COOKIE_SIZE];
-        let msg = Message::Confirm { port: 9000, cookie };
+        let msg = Message::Confirm { port: 9000, cookie, action: ConfirmAction::None };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Confirm { port: 9000, cookie: c } if c == cookie));
+        assert!(matches!(parsed, Message::Confirm { port: 9000, cookie: c, action: ConfirmAction::None } if c == cookie));
     }
 
     #[test]
@@ -381,18 +465,19 @@ mod tests {
         let addrs = vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)];
         let msg = Message::Neighbors {
             addrs: addrs.clone(),
+            subdomain: None,
         };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Neighbors { addrs: a } if a == addrs));
+        assert!(matches!(parsed, Message::Neighbors { addrs: a, subdomain: None } if a == addrs));
     }
 
     #[test]
     fn roundtrip_neighbors_empty() {
-        let msg = Message::Neighbors { addrs: vec![] };
+        let msg = Message::Neighbors { addrs: vec![], subdomain: None };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Neighbors { addrs } if addrs.is_empty()));
+        assert!(matches!(parsed, Message::Neighbors { addrs, subdomain: None } if addrs.is_empty()));
     }
 
     #[test]
@@ -402,20 +487,21 @@ mod tests {
             .collect();
         let msg = Message::Neighbors {
             addrs: addrs.clone(),
+            subdomain: None,
         };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert!(matches!(parsed, Message::Neighbors { addrs: a } if a == addrs));
+        assert!(matches!(parsed, Message::Neighbors { addrs: a, subdomain: None } if a == addrs));
     }
 
     #[test]
     fn neighbors_truncates_to_max() {
         // Create more than MAX_NEIGHBORS addresses
         let addrs: Vec<Ipv4Addr> = (0..20).map(|i| Ipv4Addr::new(10, 0, 0, i)).collect();
-        let msg = Message::Neighbors { addrs };
+        let msg = Message::Neighbors { addrs, subdomain: None };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        if let Message::Neighbors { addrs } = parsed {
+        if let Message::Neighbors { addrs, .. } = parsed {
             assert_eq!(addrs.len(), MAX_NEIGHBORS);
         } else {
             panic!("Expected Neighbors message");
@@ -446,13 +532,14 @@ mod tests {
         assert_eq!(
             Message::Confirm {
                 port: 0,
-                cookie: [0; COOKIE_SIZE]
+                cookie: [0; COOKIE_SIZE],
+                action: ConfirmAction::None,
             }
             .to_bytes()[1],
             0x03
         );
         assert_eq!(Message::Heartbeat { port: 0 }.to_bytes()[1], 0x04);
-        assert_eq!(Message::Neighbors { addrs: vec![] }.to_bytes()[1], 0x05);
+        assert_eq!(Message::Neighbors { addrs: vec![], subdomain: None }.to_bytes()[1], 0x05);
         assert_eq!(
             Message::Punch {
                 addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
@@ -486,7 +573,8 @@ mod tests {
         assert_eq!(
             Message::Confirm {
                 port: 0,
-                cookie: [0; COOKIE_SIZE]
+                cookie: [0; COOKIE_SIZE],
+                action: ConfirmAction::None,
             }
             .to_bytes()
             .len(),
@@ -502,11 +590,11 @@ mod tests {
             .len(),
             8
         );
-        assert_eq!(Message::Neighbors { addrs: vec![] }.to_bytes().len(), 3);
+        assert_eq!(Message::Neighbors { addrs: vec![], subdomain: None }.to_bytes().len(), 3);
 
         // Neighbors with 2 IPs = 3 + 2*4 = 11
         let addrs = vec![Ipv4Addr::LOCALHOST, Ipv4Addr::LOCALHOST];
-        assert_eq!(Message::Neighbors { addrs }.to_bytes().len(), 11);
+        assert_eq!(Message::Neighbors { addrs, subdomain: None }.to_bytes().len(), 11);
     }
 
     // ==================== Parse Error Tests ====================
@@ -656,11 +744,12 @@ mod tests {
         ];
         let msg = Message::Neighbors {
             addrs: addrs.clone(),
+            subdomain: None,
         };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         if let Message::Neighbors {
-            addrs: parsed_addrs,
+            addrs: parsed_addrs, ..
         } = parsed
         {
             assert_eq!(parsed_addrs, addrs);
@@ -681,6 +770,132 @@ mod tests {
         assert!(matches!(parsed, Message::Register { port: 443 }));
     }
 }
+
+
+    // ==================== Confirm Action Tests ====================
+
+    #[test]
+    fn roundtrip_confirm_with_set_txt() {
+        let cookie = [0xAB; COOKIE_SIZE];
+        let token = b"test-acme-token-value".to_vec();
+        let msg = Message::Confirm {
+            port: 443,
+            cookie,
+            action: ConfirmAction::SetTxt(token.clone()),
+        };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        match parsed {
+            Message::Confirm { port, cookie: c, action: ConfirmAction::SetTxt(t) } => {
+                assert_eq!(port, 443);
+                assert_eq!(c, cookie);
+                assert_eq!(t, token);
+            }
+            _ => panic!("Expected Confirm with SetTxt"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_confirm_with_clear_txt() {
+        let cookie = [0xAB; COOKIE_SIZE];
+        let msg = Message::Confirm {
+            port: 443,
+            cookie,
+            action: ConfirmAction::ClearTxt,
+        };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        match parsed {
+            Message::Confirm { port, cookie: c, action: ConfirmAction::ClearTxt } => {
+                assert_eq!(port, 443);
+                assert_eq!(c, cookie);
+            }
+            _ => panic!("Expected Confirm with ClearTxt"),
+        }
+    }
+
+    #[test]
+    fn confirm_action_none_backward_compat() {
+        // A Confirm with no trailing bytes should parse as ConfirmAction::None
+        let cookie = [0xAB; COOKIE_SIZE];
+        let mut bytes = vec![MAGIC, MessageType::Confirm as u8, 0x01, 0xBB];
+        bytes.extend_from_slice(&cookie);
+        let parsed = Message::parse(&bytes).unwrap();
+        assert!(matches!(parsed, Message::Confirm { action: ConfirmAction::None, .. }));
+    }
+
+    #[test]
+    fn confirm_set_txt_wire_format() {
+        let cookie = [0x00; COOKIE_SIZE];
+        let msg = Message::Confirm {
+            port: 80,
+            cookie,
+            action: ConfirmAction::SetTxt(vec![0x41, 0x42, 0x43]), // "ABC"
+        };
+        let bytes = msg.to_bytes();
+        // Base: 4 + 16 = 20, action: 1, len: 1, data: 3 = total 25
+        assert_eq!(bytes.len(), 25);
+        assert_eq!(bytes[20], 0x01); // action byte
+        assert_eq!(bytes[21], 0x03); // length
+        assert_eq!(&bytes[22..25], &[0x41, 0x42, 0x43]); // data
+    }
+
+    #[test]
+    fn confirm_clear_txt_wire_format() {
+        let cookie = [0x00; COOKIE_SIZE];
+        let msg = Message::Confirm {
+            port: 80,
+            cookie,
+            action: ConfirmAction::ClearTxt,
+        };
+        let bytes = msg.to_bytes();
+        // Base: 20, action: 1, len: 1 = total 22
+        assert_eq!(bytes.len(), 22);
+        assert_eq!(bytes[20], 0x02); // action byte
+        assert_eq!(bytes[21], 0x00); // length = 0
+    }
+
+    // ==================== Neighbors Subdomain Tests ====================
+
+    #[test]
+    fn roundtrip_neighbors_with_subdomain() {
+        let addrs = vec![Ipv4Addr::new(10, 0, 0, 1)];
+        let msg = Message::Neighbors {
+            addrs: addrs.clone(),
+            subdomain: Some("abcdef123456".to_string()),
+        };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        match parsed {
+            Message::Neighbors { addrs: a, subdomain: Some(s) } => {
+                assert_eq!(a, addrs);
+                assert_eq!(s, "abcdef123456");
+            }
+            _ => panic!("Expected Neighbors with subdomain"),
+        }
+    }
+
+    #[test]
+    fn neighbors_without_subdomain_backward_compat() {
+        // Old-format Neighbors (no trailing bytes) should have subdomain = None
+        let mut bytes = vec![MAGIC, MessageType::Neighbors as u8, 0x01];
+        bytes.extend_from_slice(&[10, 0, 0, 1]);
+        let parsed = Message::parse(&bytes).unwrap();
+        assert!(matches!(parsed, Message::Neighbors { subdomain: None, .. }));
+    }
+
+    #[test]
+    fn neighbors_subdomain_wire_format() {
+        let msg = Message::Neighbors {
+            addrs: vec![],
+            subdomain: Some("test".to_string()),
+        };
+        let bytes = msg.to_bytes();
+        // Header: 3, sub_len: 1, sub: 4 = 8
+        assert_eq!(bytes.len(), 8);
+        assert_eq!(bytes[3], 4); // sub_len
+        assert_eq!(&bytes[4..8], b"test");
+    }
 
 /// Property-based tests using proptest
 #[cfg(test)]
@@ -740,11 +955,11 @@ mod proptests {
         /// All Confirm messages should roundtrip correctly
         #[test]
         fn prop_roundtrip_confirm(port in port_strategy(), cookie in cookie_strategy()) {
-            let msg = Message::Confirm { port, cookie };
+            let msg = Message::Confirm { port, cookie, action: ConfirmAction::None };
             let bytes = msg.to_bytes();
             let parsed = Message::parse(&bytes).unwrap();
             match parsed {
-                Message::Confirm { port: p, cookie: c } => {
+                Message::Confirm { port: p, cookie: c, .. } => {
                     prop_assert_eq!(p, port);
                     prop_assert_eq!(c, cookie);
                 }
@@ -779,11 +994,11 @@ mod proptests {
         /// All Neighbors messages should roundtrip correctly
         #[test]
         fn prop_roundtrip_neighbors(addrs in ipv4_vec_strategy()) {
-            let msg = Message::Neighbors { addrs: addrs.clone() };
+            let msg = Message::Neighbors { addrs: addrs.clone(), subdomain: None };
             let bytes = msg.to_bytes();
             let parsed = Message::parse(&bytes).unwrap();
             match parsed {
-                Message::Neighbors { addrs: a } => prop_assert_eq!(a, addrs),
+                Message::Neighbors { addrs: a, .. } => prop_assert_eq!(a, addrs),
                 _ => prop_assert!(false, "Wrong message type"),
             }
         }
@@ -814,7 +1029,7 @@ mod proptests {
         #[test]
         fn prop_neighbors_count(addrs in ipv4_vec_strategy()) {
             let expected_count = addrs.len().min(MAX_NEIGHBORS);
-            let bytes = Message::Neighbors { addrs }.to_bytes();
+            let bytes = Message::Neighbors { addrs, subdomain: None }.to_bytes();
             prop_assert_eq!(bytes[2] as usize, expected_count);
             prop_assert_eq!(bytes.len(), 3 + expected_count * 4);
         }

@@ -62,6 +62,20 @@ impl CookieAuth {
             &[current_bucket, current_bucket.saturating_sub(1)],
         )
     }
+
+    /// Derive a stable subdomain for an IP/port pair.
+    ///
+    /// Computes HMAC-SHA256(secret, ip || port) (no time bucket),
+    /// base32-encodes the result, and takes the first 12 characters lowercased.
+    pub fn subdomain(&self, ip: Ipv4Addr, port: u16) -> String {
+        let mut mac =
+            HmacSha256::new_from_slice(&self.secret).expect("HMAC can accept any key size");
+        mac.update(&ip.octets());
+        mac.update(&port.to_be_bytes());
+        let hash = mac.finalize().into_bytes();
+        let encoded = data_encoding::BASE32_NOPAD.encode(&hash);
+        encoded[..12].to_lowercase()
+    }
 }
 
 #[cfg(test)]
@@ -235,6 +249,45 @@ mod tests {
         let cookie = auth.generate(Ipv4Addr::LOCALHOST, 8080, 0);
         assert_eq!(cookie.len(), COOKIE_SIZE);
         assert_eq!(COOKIE_SIZE, 16);
+    }
+}
+
+    #[test]
+    fn subdomain_deterministic() {
+        let auth = CookieAuth::new(test_secret());
+        let ip = Ipv4Addr::new(10, 0, 0, 1);
+        let port = 8080;
+        let s1 = auth.subdomain(ip, port);
+        let s2 = auth.subdomain(ip, port);
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn subdomain_is_12_chars_lowercase() {
+        let auth = CookieAuth::new(test_secret());
+        let sub = auth.subdomain(Ipv4Addr::new(10, 0, 0, 1), 8080);
+        assert_eq!(sub.len(), 12);
+        assert!(sub.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn subdomain_different_inputs_different_outputs() {
+        let auth = CookieAuth::new(test_secret());
+        let s1 = auth.subdomain(Ipv4Addr::new(10, 0, 0, 1), 8080);
+        let s2 = auth.subdomain(Ipv4Addr::new(10, 0, 0, 2), 8080);
+        let s3 = auth.subdomain(Ipv4Addr::new(10, 0, 0, 1), 8081);
+        assert_ne!(s1, s2);
+        assert_ne!(s1, s3);
+        assert_ne!(s2, s3);
+    }
+
+    #[test]
+    fn subdomain_different_secrets() {
+        let auth1 = CookieAuth::new([0x42; 32]);
+        let auth2 = CookieAuth::new([0x43; 32]);
+        let s1 = auth1.subdomain(Ipv4Addr::LOCALHOST, 443);
+        let s2 = auth2.subdomain(Ipv4Addr::LOCALHOST, 443);
+        assert_ne!(s1, s2);
     }
 }
 

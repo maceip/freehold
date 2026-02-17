@@ -97,7 +97,7 @@ impl TestServer {
                 })
             }
 
-            Message::Confirm { port, cookie } => {
+            Message::Confirm { port, cookie, .. } => {
                 if !self.cookie_auth.verify(ip, *port, cookie, &[0, 1]) {
                     return Some(Message::Error { port: *port });
                 }
@@ -107,6 +107,7 @@ impl TestServer {
 
                 Some(Message::Neighbors {
                     addrs: self.neighbors.clone(),
+                    subdomain: None,
                 })
             }
 
@@ -118,6 +119,7 @@ impl TestServer {
                 {
                     Some(Message::Neighbors {
                         addrs: self.neighbors.clone(),
+                        subdomain: None,
                     })
                 } else {
                     None
@@ -203,6 +205,7 @@ impl TestClient {
                         let msg = Message::Confirm {
                             port: self.state_machine.port,
                             cookie,
+                            action: freehold_api::ConfirmAction::None,
                         };
                         self.socket.send_to(&msg.to_bytes(), relay.addr)?;
                     }

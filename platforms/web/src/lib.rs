@@ -406,6 +406,7 @@ impl WebEngine {
             let msg = Message::Confirm {
                 port: self.port,
                 cookie,
+                action: freehold_api::ConfirmAction::None,
             };
             let _data = msg.to_bytes();
 
@@ -446,7 +447,7 @@ impl WebEngine {
                 // self.send_confirm(idx).await?;
             }
 
-            Message::Neighbors { addrs } => {
+            Message::Neighbors { addrs, .. } => {
                 let was_pending = self.relays.borrow()[idx].state == RelayState::Pending;
 
                 if was_pending {
@@ -534,6 +535,7 @@ pub fn create_confirm_message(port: u16, cookie: &[u8]) -> Result<Vec<u8>, JsVal
     Ok(Message::Confirm {
         port,
         cookie: cookie_arr,
+        action: freehold_api::ConfirmAction::None,
     }
     .to_bytes())
 }
@@ -554,7 +556,7 @@ pub fn parse_message(data: &[u8]) -> Result<JsValue, JsValue> {
             "port": port,
             "cookie": cookie.to_vec()
         }),
-        Message::Confirm { port, cookie } => serde_json::json!({
+        Message::Confirm { port, cookie, .. } => serde_json::json!({
             "type": "confirm",
             "port": port,
             "cookie": cookie.to_vec()
@@ -563,7 +565,7 @@ pub fn parse_message(data: &[u8]) -> Result<JsValue, JsValue> {
             "type": "heartbeat",
             "port": port
         }),
-        Message::Neighbors { addrs } => serde_json::json!({
+        Message::Neighbors { addrs, .. } => serde_json::json!({
             "type": "neighbors",
             "addrs": addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>()
         }),

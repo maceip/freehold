@@ -24,5 +24,6 @@
 
 pub mod config;
 pub mod cookie;
+pub mod dns;
 pub mod handler;
 pub mod quota;

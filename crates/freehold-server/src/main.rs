@@ -11,6 +11,7 @@ use freehold_api::{timing, Message};
 use freehold_common::{maps, EventType, Registration, XdpEvent, XDP_PROGRAM};
 use freehold_server::config::Config;
 use freehold_server::cookie::CookieAuth;
+use freehold_server::dns::{DnsManager, TxtRateLimiter};
 use freehold_server::quota::QuotaTracker;
 use std::collections::HashMap as StdHashMap;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
@@ -80,6 +81,9 @@ struct Server {
     max_ports_per_ip: u32,
     registrations: Arc<RwLock<HashMap<aya::maps::MapData, u16, Registration>>>,
     quotas: Arc<RwLock<QuotaTracker>>,
+    dns_manager: Option<DnsManager>,
+    txt_rate: TxtRateLimiter,
+    primary_ip: Option<Ipv4Addr>,
 }
 
 impl Server {
@@ -112,7 +116,7 @@ impl Server {
                 debug!("REGISTER {} port {} -> CHALLENGE", ip, port);
             }
 
-            Message::Confirm { port, cookie } => {
+            Message::Confirm { port, cookie, action } => {
                 let current_bucket = time_bucket();
                 if !self
                     .cookie_auth
@@ -141,9 +145,58 @@ impl Server {
                 self.quotas.write().await.register(ip, port);
                 info!("CONFIRMED {} port {} -> {}:{}", ip, port, ip, from.port());
 
+                // Compute subdomain and handle DNS
+                let subdomain = self.cookie_auth.subdomain(ip, port);
+
+                if let Some(ref dns) = self.dns_manager {
+                    if let Some(primary_ip) = self.primary_ip {
+                        if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
+                            warn!("DNS registration failed for {}: {}", subdomain, e);
+                        }
+                    }
+                }
+
+                // Handle ACME actions
+                match action {
+                    freehold_api::ConfirmAction::SetTxt(data) => {
+                        if let Some(ref dns) = self.dns_manager {
+                            if !self.txt_rate.check(port) {
+                                debug!("TXT rate limited for port {}", port);
+                                socket.send_to(&Message::Error { port }.to_bytes(), from)?;
+                                return Ok(());
+                            }
+                            match String::from_utf8(data) {
+                                Ok(token) => {
+                                    if let Err(e) = dns.set_txt(&subdomain, &token) {
+                                        warn!("DNS SetTxt failed for {}: {}", subdomain, e);
+                                        socket.send_to(&Message::Error { port }.to_bytes(), from)?;
+                                        return Ok(());
+                                    }
+                                    self.txt_rate.record(port);
+                                }
+                                Err(_) => {
+                                    warn!("Invalid UTF-8 in TXT data for port {}", port);
+                                    socket.send_to(&Message::Error { port }.to_bytes(), from)?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                    freehold_api::ConfirmAction::ClearTxt => {
+                        if let Some(ref dns) = self.dns_manager {
+                            if let Err(e) = dns.clear_txt(&subdomain) {
+                                warn!("DNS ClearTxt failed for {}: {}", subdomain, e);
+                            }
+                        }
+                    }
+                    freehold_api::ConfirmAction::None => {}
+                }
+
+                let has_dns = self.dns_manager.is_some();
                 socket.send_to(
                     &Message::Neighbors {
                         addrs: self.neighbors.clone(),
+                        subdomain: if has_dns { Some(subdomain) } else { None },
                     }
                     .to_bytes(),
                     from,
@@ -167,6 +220,7 @@ impl Server {
                 socket.send_to(
                     &Message::Neighbors {
                         addrs: self.neighbors.clone(),
+                        subdomain: None,
                     }
                     .to_bytes(),
                     from,
@@ -200,6 +254,17 @@ impl Server {
 
         let mut quotas = self.quotas.write().await;
         for port in &expired {
+            // Clean up DNS records for expired ports
+            if let Some(ref dns) = self.dns_manager {
+                if let Some(owner_ip) = quotas.get_owner(*port) {
+                    let subdomain = self.cookie_auth.subdomain(owner_ip, *port);
+                    if let Err(e) = dns.clear_all(&subdomain) {
+                        warn!("DNS cleanup failed for {} (port {}): {}", subdomain, port, e);
+                    }
+                    self.txt_rate.remove(*port);
+                }
+            }
+
             let _ = regs.remove(port);
             quotas.unregister(*port);
             debug!("Cleaned up expired registration for port {}", port);
@@ -461,12 +526,23 @@ async fn main() -> Result<()> {
 
     process_xdp_events(perf_array, verbose_events, punch_socket).await;
 
+    // Initialize DNS manager if enabled
+    let dns_manager = if config.dns.enabled {
+        info!("DNS management enabled for zone {}", config.dns.zone);
+        Some(DnsManager::new(&config.dns))
+    } else {
+        None
+    };
+
     let mut server = Server {
         cookie_auth: CookieAuth::new(secret),
         neighbors: config.neighbors.clone(),
         max_ports_per_ip: config.limits.max_ports_per_ip,
         registrations: registrations.clone(),
         quotas: quotas.clone(),
+        dns_manager,
+        txt_rate: TxtRateLimiter::new(config.dns.txt_rate_limit_secs),
+        primary_ip: config.anycast.primary_ip,
     };
 
     let cleanup_interval = Duration::from_secs(config.limits.cleanup_interval_secs);

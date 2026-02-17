@@ -25,9 +25,11 @@
 //! ```
 
 use crate::cookie::CookieAuth;
+use crate::dns::{DnsManager, TxtRateLimiter};
 use crate::quota::QuotaTracker;
-use freehold_api::Message;
+use freehold_api::{ConfirmAction, Message};
 use std::net::Ipv4Addr;
+use tracing::{debug, warn};
 
 /// Context shared by all message handler implementations
 pub struct HandlerContext {
@@ -39,6 +41,12 @@ pub struct HandlerContext {
     pub max_ports_per_ip: u32,
     /// Neighbor list to send in NEIGHBORS messages
     pub neighbors: Vec<Ipv4Addr>,
+    /// DNS manager for ACME challenges (None if DNS disabled)
+    pub dns_manager: Option<DnsManager>,
+    /// TXT record rate limiter
+    pub txt_rate: TxtRateLimiter,
+    /// Primary relay IP for DNS A records
+    pub primary_ip: Option<Ipv4Addr>,
 }
 
 impl HandlerContext {
@@ -49,6 +57,9 @@ impl HandlerContext {
             quotas: QuotaTracker::default(),
             max_ports_per_ip,
             neighbors,
+            dns_manager: None,
+            txt_rate: TxtRateLimiter::new(300),
+            primary_ip: None,
         }
     }
 }
@@ -126,7 +137,7 @@ pub trait MessageHandler {
     fn handle(&mut self, msg: Message, from_ip: Ipv4Addr) -> HandleResult {
         match msg {
             Message::Register { port } => self.handle_register(from_ip, port),
-            Message::Confirm { port, cookie } => self.handle_confirm(from_ip, port, cookie),
+            Message::Confirm { port, cookie, action } => self.handle_confirm(from_ip, port, cookie, action),
             Message::Heartbeat { port } => self.handle_heartbeat(from_ip, port),
             _ => HandleResult::NoReply,
         }
@@ -154,6 +165,7 @@ pub trait MessageHandler {
         from_ip: Ipv4Addr,
         port: u16,
         cookie: [u8; freehold_api::COOKIE_SIZE],
+        action: freehold_api::ConfirmAction,
     ) -> HandleResult {
         let valid_buckets = self.valid_buckets();
 
@@ -170,9 +182,56 @@ pub trait MessageHandler {
         self.register(from_ip, port);
         self.context_mut().quotas.register(from_ip, port);
 
-        // Send neighbors
+        // Compute subdomain
+        let subdomain = self.context().cookie_auth.subdomain(from_ip, port);
+
+        // Set DNS registration records (A + HTTPS)
+        if let Some(ref dns) = self.context().dns_manager {
+            if let Some(primary_ip) = self.context().primary_ip {
+                if let Err(e) = dns.set_registration(&subdomain, primary_ip, port) {
+                    warn!("DNS registration failed for {}: {}", subdomain, e);
+                }
+            }
+        }
+
+        // Handle ACME actions
+        match action {
+            ConfirmAction::SetTxt(data) => {
+                if let Some(ref dns) = self.context().dns_manager {
+                    if !self.context().txt_rate.check(port) {
+                        debug!("TXT rate limited for port {}", port);
+                        return Message::Error { port }.into();
+                    }
+                    match String::from_utf8(data) {
+                        Ok(token) => {
+                            if let Err(e) = dns.set_txt(&subdomain, &token) {
+                                warn!("DNS SetTxt failed for {}: {}", subdomain, e);
+                                return Message::Error { port }.into();
+                            }
+                            self.context_mut().txt_rate.record(port);
+                        }
+                        Err(_) => {
+                            warn!("Invalid UTF-8 in TXT data for port {}", port);
+                            return Message::Error { port }.into();
+                        }
+                    }
+                }
+            }
+            ConfirmAction::ClearTxt => {
+                if let Some(ref dns) = self.context().dns_manager {
+                    if let Err(e) = dns.clear_txt(&subdomain) {
+                        warn!("DNS ClearTxt failed for {}: {}", subdomain, e);
+                    }
+                }
+            }
+            ConfirmAction::None => {}
+        }
+
+        // Send neighbors with subdomain
+        let has_dns = self.context().dns_manager.is_some();
         Message::Neighbors {
             addrs: self.context().neighbors.clone(),
+            subdomain: if has_dns { Some(subdomain) } else { None },
         }
         .into()
     }
@@ -183,6 +242,7 @@ pub trait MessageHandler {
         if self.is_registered(from_ip, port) {
             Message::Neighbors {
                 addrs: self.context().neighbors.clone(),
+                subdomain: None,
             }
             .into()
         } else {
@@ -261,9 +321,9 @@ mod tests {
         };
 
         // Step 2: CONFIRM
-        let result = handler.handle(Message::Confirm { port, cookie }, client_ip);
+        let result = handler.handle(Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None }, client_ip);
         match result {
-            HandleResult::Reply(Message::Neighbors { addrs }) => {
+            HandleResult::Reply(Message::Neighbors { addrs, .. }) => {
                 assert_eq!(addrs.len(), 2);
             }
             _ => panic!("Expected NEIGHBORS"),
@@ -286,6 +346,7 @@ mod tests {
             Message::Confirm {
                 port,
                 cookie: bogus_cookie,
+                action: freehold_api::ConfirmAction::None,
             },
             client_ip,
         );
@@ -336,7 +397,7 @@ mod tests {
                 HandleResult::Reply(Message::Challenge { cookie, .. }) => cookie,
                 _ => panic!("Expected CHALLENGE"),
             };
-            let result = handler.handle(Message::Confirm { port, cookie }, client_ip);
+            let result = handler.handle(Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None }, client_ip);
             assert!(matches!(
                 result,
                 HandleResult::Reply(Message::Neighbors { .. })
@@ -371,7 +432,7 @@ mod tests {
                 HandleResult::Reply(Message::Challenge { cookie, .. }) => cookie,
                 _ => panic!("Expected CHALLENGE"),
             };
-            let result = handler.handle(Message::Confirm { port, cookie }, client_ip);
+            let result = handler.handle(Message::Confirm { port, cookie, action: freehold_api::ConfirmAction::None }, client_ip);
             assert!(
                 matches!(result, HandleResult::Reply(Message::Neighbors { .. })),
                 "Client {} should be able to register port {}",
