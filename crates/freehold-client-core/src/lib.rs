@@ -332,6 +332,18 @@ impl Engine {
                 }
             }
 
+            Message::Punch { addr } => {
+                // Only accept Punch from a known relay
+                if self.relays.iter().any(|r| r.addr.port() == from.port()) {
+                    if let Err(e) = self.socket.send_to(&[0x00], addr) {
+                        warn!("NAT punch failed to {}: {}", addr, e);
+                    } else {
+                        self.bytes_sent += 1;
+                        debug!("NAT punch: sent UDP to {}", addr);
+                    }
+                }
+            }
+
             Message::Error { port } if port == self.port => {
                 warn!("ERROR from {}", from);
                 self.relays[idx].state = RelayState::Disconnected;

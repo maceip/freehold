@@ -12,10 +12,11 @@ use freehold_common::{maps, EventType, Registration, XdpEvent, XDP_PROGRAM};
 use freehold_server::config::Config;
 use freehold_server::cookie::CookieAuth;
 use freehold_server::quota::QuotaTracker;
+use std::collections::HashMap as StdHashMap;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -77,7 +78,7 @@ struct Server {
     cookie_auth: CookieAuth,
     neighbors: Vec<Ipv4Addr>,
     max_ports_per_ip: u32,
-    registrations: HashMap<aya::maps::MapData, u16, Registration>,
+    registrations: Arc<RwLock<HashMap<aya::maps::MapData, u16, Registration>>>,
     quotas: Arc<RwLock<QuotaTracker>>,
 }
 
@@ -132,6 +133,8 @@ impl Server {
                     expiry: now + timing::REGISTRATION_TTL.as_nanos() as u64,
                 };
                 self.registrations
+                    .write()
+                    .await
                     .insert(port, reg, 0)
                     .context("insert registration")?;
 
@@ -148,18 +151,19 @@ impl Server {
             }
 
             Message::Heartbeat { port } => {
-                if let Ok(mut reg) = self.registrations.get(&port, 0) {
+                let mut regs = self.registrations.write().await;
+                if let Ok(mut reg) = regs.get(&port, 0) {
                     let reg_ip = Ipv4Addr::from(u32::from_be(reg.home_ip));
                     if reg_ip != ip {
                         debug!("Heartbeat IP mismatch: {} != {}", ip, reg_ip);
                         return Ok(());
                     }
                     reg.expiry = ktime_get_ns() + timing::REGISTRATION_TTL.as_nanos() as u64;
-                    self.registrations
-                        .insert(port, reg, 0)
+                    regs.insert(port, reg, 0)
                         .context("update registration")?;
                     debug!("HEARTBEAT {} port {}", ip, port);
                 }
+                drop(regs);
                 socket.send_to(
                     &Message::Neighbors {
                         addrs: self.neighbors.clone(),
@@ -180,8 +184,9 @@ impl Server {
 
         let ports: Vec<u16> = self.quotas.read().await.ports().collect();
 
+        let mut regs = self.registrations.write().await;
         for port in ports {
-            match self.registrations.get(&port, 0) {
+            match regs.get(&port, 0) {
                 Ok(reg) => {
                     if now > reg.expiry {
                         expired.push(port);
@@ -195,7 +200,7 @@ impl Server {
 
         let mut quotas = self.quotas.write().await;
         for port in &expired {
-            let _ = self.registrations.remove(port);
+            let _ = regs.remove(port);
             quotas.unregister(*port);
             debug!("Cleaned up expired registration for port {}", port);
         }
@@ -204,10 +209,20 @@ impl Server {
     }
 }
 
+/// Shared state for NAT hole-punch tracking
+struct PunchTracker {
+    /// Recently seen (src_ip, src_port, dst_port) tuples with timestamps
+    seen: StdHashMap<(Ipv4Addr, u16, u16), Instant>,
+}
+
+/// TTL for seen-sources entries
+const PUNCH_SEEN_TTL: Duration = Duration::from_secs(60);
+
 /// Process XDP events from perf buffer
 async fn process_xdp_events(
     mut perf_array: AsyncPerfEventArray<aya::maps::MapData>,
     verbose: bool,
+    punch_socket: Arc<UdpSocket>,
 ) {
     let cpus = online_cpus().expect("get online CPUs");
 
@@ -216,10 +231,17 @@ async fn process_xdp_events(
             .open(cpu_id, None)
             .expect("open perf buffer for CPU");
 
+        let punch_socket = punch_socket.clone();
+
         tokio::spawn(async move {
+            let mut punch_tracker = PunchTracker {
+                seen: StdHashMap::new(),
+            };
             let mut buffers = (0..10)
                 .map(|_| BytesMut::with_capacity(1024))
                 .collect::<Vec<_>>();
+
+            let mut last_prune = Instant::now();
 
             loop {
                 let events = buf.read_events(&mut buffers).await;
@@ -279,6 +301,37 @@ async fn process_xdp_events(
                                                 event.dst_port,
                                                 event.pkt_len
                                             );
+                                        }
+
+                                        // NAT hole-punch: send Punch to Bob for new sources
+                                        let key = (src_ip, event.src_port, event.dst_port);
+                                        let now = Instant::now();
+
+                                        let is_new = match punch_tracker.seen.get(&key) {
+                                            None => true,
+                                            Some(t) => now.duration_since(*t) >= PUNCH_SEEN_TTL,
+                                        };
+
+                                        if is_new {
+                                            punch_tracker.seen.insert(key, now);
+
+                                            // XDP already rewrote dst to home_ip:home_port,
+                                            // so the event contains Bob's address directly
+                                            let home_addr = SocketAddr::new(dst_ip.into(), event.dst_port);
+                                            let punch_msg = Message::Punch {
+                                                addr: SocketAddr::new(src_ip.into(), event.src_port),
+                                            };
+                                            if let Err(e) = punch_socket.send_to(&punch_msg.to_bytes(), home_addr) {
+                                                warn!("Failed to send Punch to {}: {}", home_addr, e);
+                                            } else {
+                                                debug!("Punch: sent {}:{} -> {}", src_ip, event.src_port, home_addr);
+                                            }
+                                        }
+
+                                        // Periodic prune of stale entries
+                                        if now.duration_since(last_prune) >= PUNCH_SEEN_TTL {
+                                            punch_tracker.seen.retain(|_, t| now.duration_since(*t) < PUNCH_SEEN_TTL);
+                                            last_prune = now;
                                         }
                                     }
                                     None => {
@@ -376,7 +429,7 @@ async fn main() -> Result<()> {
         AsyncPerfEventArray::try_from(bpf.take_map(maps::EVENTS).context("get events map")?)
             .context("create perf event array")?;
 
-    process_xdp_events(perf_array, verbose_events).await;
+    let registrations = Arc::new(RwLock::new(regs));
 
     let prog: &mut Xdp = bpf
         .program_mut(XDP_PROGRAM)
@@ -404,11 +457,15 @@ async fn main() -> Result<()> {
 
     let quotas = Arc::new(RwLock::new(QuotaTracker::default()));
 
+    let punch_socket = Arc::new(socket.try_clone().context("clone socket for punch")?);
+
+    process_xdp_events(perf_array, verbose_events, punch_socket).await;
+
     let mut server = Server {
         cookie_auth: CookieAuth::new(secret),
         neighbors: config.neighbors.clone(),
         max_ports_per_ip: config.limits.max_ports_per_ip,
-        registrations: regs,
+        registrations: registrations.clone(),
         quotas: quotas.clone(),
     };
 

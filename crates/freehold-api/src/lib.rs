@@ -3,7 +3,7 @@
 //! This defines the wire format for registration, heartbeat, and neighbor discovery.
 
 use byteorder::{BigEndian, ByteOrder};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 /// Protocol magic byte - 'F' for Freehold
 pub const MAGIC: u8 = 0x46;
@@ -49,6 +49,7 @@ pub enum MessageType {
     Confirm = 0x03,
     Heartbeat = 0x04,
     Neighbors = 0x05,
+    Punch = 0x06,
     Error = 0xFF,
 }
 
@@ -62,6 +63,7 @@ impl TryFrom<u8> for MessageType {
             0x03 => Ok(Self::Confirm),
             0x04 => Ok(Self::Heartbeat),
             0x05 => Ok(Self::Neighbors),
+            0x06 => Ok(Self::Punch),
             0xFF => Ok(Self::Error),
             _ => Err(ProtocolError::InvalidMessageType(value)),
         }
@@ -104,6 +106,9 @@ pub enum Message {
 
     /// Server -> Client: List of neighbor relay IPs
     Neighbors { addrs: Vec<Ipv4Addr> },
+
+    /// Server -> Client: NAT hole-punch request (send UDP to this addr)
+    Punch { addr: SocketAddr },
 
     /// Server -> Client: Error response
     Error { port: u16 },
@@ -156,6 +161,20 @@ impl Message {
                     MessageType::Challenge => Message::Challenge { port, cookie },
                     MessageType::Confirm => Message::Confirm { port, cookie },
                     _ => unreachable!(),
+                })
+            }
+
+            MessageType::Punch => {
+                if data.len() < 8 {
+                    return Err(ProtocolError::TooShort {
+                        expected: 8,
+                        actual: data.len(),
+                    });
+                }
+                let ip = Ipv4Addr::new(data[2], data[3], data[4], data[5]);
+                let port = BigEndian::read_u16(&data[6..8]);
+                Ok(Message::Punch {
+                    addr: SocketAddr::new(ip.into(), port),
                 })
             }
 
@@ -218,6 +237,19 @@ impl Message {
                 buf
             }
 
+            Message::Punch { addr } => {
+                let ip = match addr {
+                    SocketAddr::V4(a) => *a.ip(),
+                    SocketAddr::V6(_) => Ipv4Addr::UNSPECIFIED,
+                };
+                let mut buf = vec![MAGIC, MessageType::Punch as u8];
+                buf.extend_from_slice(&ip.octets());
+                let mut port_bytes = [0u8; 2];
+                BigEndian::write_u16(&mut port_bytes, addr.port());
+                buf.extend_from_slice(&port_bytes);
+                buf
+            }
+
             Message::Neighbors { addrs } => {
                 let count = addrs.len().min(MAX_NEIGHBORS) as u8;
                 let mut buf = vec![MAGIC, MessageType::Neighbors as u8, count];
@@ -249,13 +281,14 @@ mod tests {
         assert_eq!(MessageType::try_from(0x03).unwrap(), MessageType::Confirm);
         assert_eq!(MessageType::try_from(0x04).unwrap(), MessageType::Heartbeat);
         assert_eq!(MessageType::try_from(0x05).unwrap(), MessageType::Neighbors);
+        assert_eq!(MessageType::try_from(0x06).unwrap(), MessageType::Punch);
         assert_eq!(MessageType::try_from(0xFF).unwrap(), MessageType::Error);
     }
 
     #[test]
     fn message_type_invalid_conversions() {
         // Test all invalid values
-        for i in [0x00, 0x06, 0x10, 0x80, 0xFE] {
+        for i in [0x00, 0x07, 0x10, 0x80, 0xFE] {
             assert!(matches!(
                 MessageType::try_from(i),
                 Err(ProtocolError::InvalidMessageType(v)) if v == i
@@ -316,6 +349,31 @@ mod tests {
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
         assert!(matches!(parsed, Message::Error { port: 443 }));
+    }
+
+    #[test]
+    fn roundtrip_punch() {
+        let addr = SocketAddr::new(Ipv4Addr::new(203, 0, 113, 42).into(), 12345);
+        let msg = Message::Punch { addr };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        assert_eq!(parsed, Message::Punch { addr });
+    }
+
+    #[test]
+    fn roundtrip_punch_various_addrs() {
+        let addrs = vec![
+            SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
+            SocketAddr::new(Ipv4Addr::new(255, 255, 255, 255).into(), 65535),
+            SocketAddr::new(Ipv4Addr::new(192, 168, 1, 1).into(), 443),
+            SocketAddr::new(Ipv4Addr::new(10, 0, 0, 1).into(), 8080),
+        ];
+        for addr in addrs {
+            let msg = Message::Punch { addr };
+            let bytes = msg.to_bytes();
+            let parsed = Message::parse(&bytes).unwrap();
+            assert_eq!(parsed, Message::Punch { addr });
+        }
     }
 
     #[test]
@@ -395,6 +453,13 @@ mod tests {
         );
         assert_eq!(Message::Heartbeat { port: 0 }.to_bytes()[1], 0x04);
         assert_eq!(Message::Neighbors { addrs: vec![] }.to_bytes()[1], 0x05);
+        assert_eq!(
+            Message::Punch {
+                addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+            }
+            .to_bytes()[1],
+            0x06
+        );
         assert_eq!(Message::Error { port: 0 }.to_bytes()[1], 0xFF);
     }
 
@@ -429,6 +494,14 @@ mod tests {
         );
         assert_eq!(Message::Heartbeat { port: 0 }.to_bytes().len(), 4);
         assert_eq!(Message::Error { port: 0 }.to_bytes().len(), 4);
+        assert_eq!(
+            Message::Punch {
+                addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+            }
+            .to_bytes()
+            .len(),
+            8
+        );
         assert_eq!(Message::Neighbors { addrs: vec![] }.to_bytes().len(), 3);
 
         // Neighbors with 2 IPs = 3 + 2*4 = 11
@@ -758,7 +831,7 @@ mod proptests {
         #[test]
         fn prop_invalid_message_type_fails(
             msg_type in any::<u8>().prop_filter("Invalid type", |&t| {
-                !matches!(t, 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0xFF)
+                !matches!(t, 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0x06 | 0xFF)
             })
         ) {
             let data = vec![MAGIC, msg_type, 0x00, 0x50];

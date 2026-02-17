@@ -44,30 +44,38 @@ Your service is now reachable at `freehold.lit.app:8080`.
 ## How It Works
 
 ```
-You (behind NAT)                    Freehold Relay                    Browser
-     |                                   |                               |
-     |------- UDP Register ------------->|                               |
-     |<------ Challenge -----------------|                               |
-     |------- Confirm ------------------>|                               |
-     |                                   |                               |
-     |        [Registration active]      |                               |
-     |                                   |                               |
-     |                                   |<----- HTTPS request ----------|
-     |<---- XDP forwards packet ---------|                               |
-     |------- Response ----------------->|-----> Response -------------->|
+Browser (Alice)                 Freehold Relay                  You (Bob, behind NAT)
+     |                              |                                |
+     |                              |    <--- UDP Register ----------|
+     |                              |    --- HMAC Challenge -------->|
+     |                              |    <--- Confirm --------------|
+     |                              |       [eBPF map updated]       |
+     |                              |                                |
+     |--- QUIC/H3 request -------->|                                |
+     |                              |--- XDP rewrites dst --------->| (NAT may drop)
+     |                              |--- Punch(alice:port) -------->| (control channel)
+     |                              |                                |
+     |                              |              Bob sends UDP --->| to Alice (opens NAT)
+     |                              |                                |
+     |--- QUIC retransmit -------->|--- XDP rewrites dst --------->| (NAT allows now)
+     |                              |                                |--- H3 Proxy → backend
+     |<--------- QUIC response directly from Bob -------------------|
 ```
 
-1. Client sends UDP registration to relay (opens NAT hole)
-2. Relay responds with HMAC challenge (stateless verification)
-3. Client confirms, relay adds to eBPF map
-4. Incoming traffic is forwarded at wire-speed via XDP
+1. **Bob registers** — sends UDP to the relay, completes HMAC challenge, gets added to the eBPF map
+2. **Alice connects** — sends QUIC to `relay:port`. The XDP program rewrites the destination IP to Bob's address but **leaves Alice's source IP unchanged**
+3. **NAT hole-punch** — if Bob is behind endpoint-dependent NAT, the relay detects the new source and sends a Punch message telling Bob to send a UDP packet to Alice, opening the NAT mapping. QUIC retransmission handles the 1-2s initial latency
+4. **Bob responds directly** — Bob sees Alice's real IP as the packet source and sends the QUIC response straight back to her, bypassing the relay entirely
+5. **Alice's NAT accepts it** — she initiated the outbound UDP, so her NAT allows the reply even though it comes from Bob's IP (QUIC uses connection IDs, not IP tuples)
+
+The relay is only in the **inbound** path. Alice doesn't install anything — she just uses a browser.
 
 ## Features
 
 - **Wire-speed forwarding** — eBPF/XDP processes packets in kernel space
 - **Stateless verification** — HMAC cookies prevent spoofing without storing state
 - **Anycast routing** — BGP announces your prefix globally
-- **NAT hole-punching** — UDP-based registration works through restrictive NATs
+- **NAT hole-punching** — Relay-assisted UDP punch opens endpoint-dependent NATs for arbitrary sources
 - **H3/QUIC proxy** — Optional HTTP/3 reverse proxy with automatic TLS
 - **WebSocket over H3** — RFC 9220 Extended CONNECT for WebSocket through QUIC relay
 - **Multi-platform** — Desktop, mobile, and web clients
