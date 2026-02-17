@@ -862,7 +862,9 @@ dependencies = [
  "bytes",
  "fastrand",
  "h3",
+ "h3-datagram",
  "h3-quinn",
+ "h3-webtransport",
  "http",
  "http-body-util",
  "hyper",
@@ -910,6 +912,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows",
+]
+
+[[package]]
+name = "freehold-scute"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "freehold-client-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1360,6 +1376,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "h3-datagram"
+version = "0.0.2"
+source = "git+https://github.com/hyperium/h3?branch=master#704b37a2e82cf4c8de379ec779dbc2a23bfcb9a1"
+dependencies = [
+ "bytes",
+ "h3",
+]
+
+[[package]]
 name = "h3-quinn"
 version = "0.0.10"
 source = "git+https://github.com/hyperium/h3?branch=master#704b37a2e82cf4c8de379ec779dbc2a23bfcb9a1"
@@ -1367,8 +1392,24 @@ dependencies = [
  "bytes",
  "futures-util",
  "h3",
+ "h3-datagram",
  "quinn",
  "tokio-util",
+]
+
+[[package]]
+name = "h3-webtransport"
+version = "0.1.2"
+source = "git+https://github.com/hyperium/h3?branch=master#704b37a2e82cf4c8de379ec779dbc2a23bfcb9a1"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "h3",
+ "h3-datagram",
+ "http",
+ "pin-project-lite",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

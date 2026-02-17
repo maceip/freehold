@@ -1,0 +1,26 @@
+[package]
+name = "freehold-scute"
+description = "Scute bridge binary — JSON-over-stdio interface to freehold-client-core"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scute-service"
+path = "src/main.rs"
+
+[lib]
+name = "freehold_scute"
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+freehold-client-core = { workspace = true, features = ["h3-proxy", "acme"] }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "6"

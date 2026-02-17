@@ -2,7 +2,7 @@
 //!
 //! Accepts QUIC/H3 connections from Alice's browser and forwards
 //! requests to Bob's local HTTP backend. Supports WebSocket over
-//! HTTP/3 via RFC 9220 Extended CONNECT.
+//! HTTP/3 via RFC 9220 Extended CONNECT and WebTransport (draft-ietf-webtrans-http3).
 //!
 //! ```text
 //! Alice (Chrome) --H3/QUIC--> Bob's H3Proxy --HTTP/1.1--> Bob's Backend
@@ -91,7 +91,16 @@ pub fn make_quinn_server_config(
 
     let quic_config = QuicServerConfig::try_from(tls_config)
         .map_err(|e| anyhow::anyhow!("QUIC config: {}", e))?;
-    Ok(quinn::ServerConfig::with_crypto(Arc::new(quic_config)))
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_config));
+
+    // Enable datagrams (required for WebTransport)
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_concurrent_bidi_streams(100u32.into());
+    transport.max_concurrent_uni_streams(100u32.into());
+    transport.datagram_receive_buffer_size(Some(65536));
+    server_config.transport_config(Arc::new(transport));
+
+    Ok(server_config)
 }
 
 /// Accept H3 connections on a pre-built Quinn endpoint and proxy to backend.
@@ -133,6 +142,10 @@ async fn handle_connection(incoming: quinn::Incoming, backend: SocketAddr) -> Re
 
     let mut h3_conn = h3::server::builder()
         .enable_extended_connect(true)
+        .enable_webtransport(true)
+        .enable_datagram(true)
+        .max_webtransport_sessions(16)
+        .send_grease(true)
         .build(h3_quinn::Connection::new(connection))
         .await
         .context("H3 handshake")?;
@@ -140,16 +153,29 @@ async fn handle_connection(incoming: quinn::Incoming, backend: SocketAddr) -> Re
     loop {
         match h3_conn.accept().await {
             Ok(Some(resolver)) => {
-                tokio::spawn(async move {
-                    match resolver.resolve_request().await {
-                        Ok((request, stream)) => {
+                match resolver.resolve_request().await {
+                    Ok((request, stream)) => {
+                        // WebTransport CONNECT consumes the h3 connection,
+                        // so we must check and handle it on this task (not spawned).
+                        if request.method() == Method::CONNECT {
+                            if let Some(protocol) = request.extensions().get::<Protocol>() {
+                                if *protocol == Protocol::WEB_TRANSPORT {
+                                    info!("WebTransport CONNECT from {}", remote);
+                                    // WebTransportSession::accept() takes ownership of h3_conn
+                                    return handle_webtransport(request, stream, h3_conn, backend).await;
+                                }
+                            }
+                        }
+
+                        // Non-WebTransport requests can be spawned
+                        tokio::spawn(async move {
                             if let Err(e) = handle_request(request, stream, backend, remote).await {
                                 warn!("Request error: {:?}", e);
                             }
-                        }
-                        Err(e) => warn!("Resolve request: {:?}", e),
+                        });
                     }
-                });
+                    Err(e) => warn!("Resolve request: {:?}", e),
+                }
             }
             Ok(None) => {
                 debug!("Connection closed gracefully");
@@ -164,6 +190,90 @@ async fn handle_connection(incoming: quinn::Incoming, backend: SocketAddr) -> Re
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// WebTransport handler
+// ---------------------------------------------------------------------------
+
+async fn handle_webtransport(
+    request: Request<()>,
+    stream: RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>,
+    conn: h3::server::Connection<h3_quinn::Connection, Bytes>,
+    backend: SocketAddr,
+) -> Result<()> {
+    use h3_webtransport::server::{AcceptedBi, WebTransportSession};
+
+    let session = WebTransportSession::accept(request, stream, conn)
+        .await
+        .map_err(|e| anyhow::anyhow!("WebTransport accept: {:?}", e))?;
+
+    let session_id = session.session_id();
+    info!("WebTransport session {:?} established", session_id);
+
+    // Each accepted bidi stream gets proxied to backend as raw TCP
+    loop {
+        match session.accept_bi().await {
+            Ok(Some(AcceptedBi::BidiStream(_sid, wt_stream))) => {
+                let backend = backend;
+                tokio::spawn(async move {
+                    if let Err(e) = proxy_webtransport_bidi(wt_stream, backend).await {
+                        debug!("WebTransport bidi stream error: {:?}", e);
+                    }
+                });
+            }
+            Ok(Some(AcceptedBi::Request(_req, _stream))) => {
+                // Additional HTTP requests within the session — ignore for now
+                debug!("WebTransport: received nested HTTP request, ignoring");
+            }
+            Ok(None) => {
+                debug!("WebTransport session {:?} closed", session_id);
+                break;
+            }
+            Err(e) => {
+                debug!("WebTransport session {:?} error: {:?}", session_id, e);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Proxy a single WebTransport bidi stream to the backend as raw TCP.
+async fn proxy_webtransport_bidi(
+    wt_stream: h3_webtransport::stream::BidiStream<h3_quinn::BidiStream<Bytes>, Bytes>,
+    backend: SocketAddr,
+) -> Result<()> {
+    let tcp = TcpStream::connect(backend)
+        .await
+        .context("connect to backend for WebTransport")?;
+
+    // split() returns (SendStream, RecvStream) per h3::quic::BidiStream trait
+    let (wt_send, wt_recv) = h3::quic::BidiStream::split(wt_stream);
+    let (tcp_read, tcp_write) = tcp.into_split();
+
+    // WT recv -> TCP write (client sends data, forward to backend)
+    let wt_to_tcp = tokio::spawn(async move {
+        tokio::pin!(wt_recv);
+        tokio::pin!(tcp_write);
+        let _ = tokio::io::copy(&mut wt_recv, &mut tcp_write).await;
+    });
+
+    // TCP read -> WT send (backend sends data, forward to client)
+    let tcp_to_wt = tokio::spawn(async move {
+        tokio::pin!(wt_send);
+        tokio::pin!(tcp_read);
+        let _ = tokio::io::copy(&mut tcp_read, &mut wt_send).await;
+    });
+
+    let _ = tokio::try_join!(wt_to_tcp, tcp_to_wt);
+    debug!("WebTransport bidi stream ended");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket handler (RFC 9220)
+// ---------------------------------------------------------------------------
 
 async fn handle_request<S>(
     request: Request<()>,
@@ -317,6 +427,10 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
         .position(|w| w == b"\r\n\r\n")
         .map(|p| p + 4)
 }
+
+// ---------------------------------------------------------------------------
+// HTTP/1.1 forwarding
+// ---------------------------------------------------------------------------
 
 async fn handle_http_request<S>(
     request: Request<()>,

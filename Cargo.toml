@@ -10,6 +10,7 @@ members = [
     "crates/freehold-h3-proxy",
     "crates/freehold-android-bridge",
     "crates/freehold-e2e-tests",
+    "crates/freehold-scute",
     # Examples
     "examples/heartbeat-ws",
 ]
@@ -64,3 +65,5 @@ rustls-pemfile = "2.2"
 [patch.crates-io]
 h3 = { git = "https://github.com/hyperium/h3", branch = "master" }
 h3-quinn = { git = "https://github.com/hyperium/h3", branch = "master" }
+h3-webtransport = { git = "https://github.com/hyperium/h3", branch = "master" }
+h3-datagram = { git = "https://github.com/hyperium/h3", branch = "master" }
