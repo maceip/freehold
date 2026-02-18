@@ -168,8 +168,10 @@ int freehold_ingress(struct xdp_md *ctx) {
     __builtin_memcpy(eth->h_source, tmp_mac, ETH_ALEN);
 
     if (is_reverse) {
-        // Reverse path: Bob -> Alice
-        // DNAT to client_ip:client_port, SNAT to relay_ip
+        // Reverse path: Bob -> Relay -> Alice
+        // Bob responded to relay_ip:dest_port (the registered port).
+        // Rewrite: src=relay_ip:dest_port, dst=client_ip:client_port
+        // so Alice sees the response from the address she originally sent to.
         if (reg->client_ip == 0 || reg->relay_ip == 0)
             return XDP_PASS;  // No client address yet, let kernel handle
 
@@ -178,6 +180,7 @@ int freehold_ingress(struct xdp_md *ctx) {
 
         ip->saddr = reg->relay_ip;
         ip->daddr = reg->client_ip;
+        udp->source = bpf_htons(dest_port);  // relay_port — matches what Alice sent to
         udp->dest = bpf_htons(reg->client_port);
 
         update_ip_csum(ip, old_saddr, reg->relay_ip);
@@ -186,16 +189,35 @@ int freehold_ingress(struct xdp_md *ctx) {
 
         emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD);
     } else {
-        // Forward path: Alice -> Bob
+        // Forward path: Alice -> Relay -> Bob
         // Emit event BEFORE rewrite so userspace gets Alice's original address
         emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD);
 
-        // DNAT to home_ip:home_port
-        __u32 old_daddr = ip->daddr;
-        ip->daddr = reg->home_ip;
-        udp->dest = bpf_htons(reg->home_port);
-        update_ip_csum(ip, old_daddr, reg->home_ip);
-        udp->check = 0;
+        // Full SNAT+DNAT: src=relay_ip:dest_port, dst=home_ip:home_port
+        // This makes Bob's Quinn respond to relay_ip:dest_port, which hits
+        // the reverse path above. Without SNAT, Bob responds directly to
+        // Alice and the relay never sees the response.
+        if (reg->relay_ip != 0) {
+            // Bidirectional relay: full SNAT+DNAT
+            __u32 old_saddr = ip->saddr;
+            __u32 old_daddr = ip->daddr;
+
+            ip->saddr = reg->relay_ip;
+            ip->daddr = reg->home_ip;
+            udp->source = bpf_htons(dest_port);  // relay_port — Bob responds here
+            udp->dest = bpf_htons(reg->home_port);
+
+            update_ip_csum(ip, old_saddr, reg->relay_ip);
+            update_ip_csum(ip, old_daddr, reg->home_ip);
+            udp->check = 0;
+        } else {
+            // Legacy: DNAT only, Bob responds directly to Alice
+            __u32 old_daddr = ip->daddr;
+            ip->daddr = reg->home_ip;
+            udp->dest = bpf_htons(reg->home_port);
+            update_ip_csum(ip, old_daddr, reg->home_ip);
+            udp->check = 0;
+        }
     }
 
     return XDP_TX;
