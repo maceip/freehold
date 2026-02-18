@@ -541,6 +541,16 @@ impl Engine {
             self.relays[idx].last_activity = Instant::now();
             debug!("HEARTBEAT -> {}", addr);
         }
+
+        // Open NAT mapping for the registered port so the relay's XDP
+        // forward path (src=relay_ip:registered_port) passes through
+        // port-restricted cone NATs.  Without this, Bob's NAT only
+        // allows relay_ip:control_port and drops forwarded traffic.
+        let relay_data_addr = SocketAddr::new(addr.ip(), self.port);
+        if relay_data_addr != addr {
+            let _ = self.socket.send_to(&[0x00], relay_data_addr);
+            self.bytes_sent += 1;
+        }
     }
 
     async fn process(&mut self, data: &[u8], from: SocketAddr) {
@@ -586,6 +596,16 @@ impl Engine {
                         addr: from,
                         state: RelayState::Connected,
                     });
+
+                    // Open NAT mapping for the registered port immediately.
+                    // The relay's XDP forwards traffic with src=relay_ip:registered_port;
+                    // port-restricted NATs need a prior outbound to that port.
+                    let relay_data_addr = SocketAddr::new(from.ip(), self.port);
+                    if relay_data_addr.port() != from.port() {
+                        let _ = self.socket.send_to(&[0x00], relay_data_addr);
+                        self.bytes_sent += 1;
+                        debug!("NAT open: sent to {} (data port)", relay_data_addr);
+                    }
                 }
                 self.relays[idx].last_activity = Instant::now();
 
