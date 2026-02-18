@@ -130,7 +130,8 @@ pub enum Message {
     },
 
     /// Server -> Client: NAT hole-punch request (send UDP to this addr)
-    Punch { addr: SocketAddr },
+    /// spray_range > 0 means spray ±spray_range/2 ports around addr.port()
+    Punch { addr: SocketAddr, spray_range: u16 },
 
     /// Server -> Client: Error response
     Error { port: u16 },
@@ -249,8 +250,14 @@ impl Message {
                 }
                 let ip = Ipv4Addr::new(data[2], data[3], data[4], data[5]);
                 let port = BigEndian::read_u16(&data[6..8]);
+                let spray_range = if data.len() >= 10 {
+                    BigEndian::read_u16(&data[8..10])
+                } else {
+                    0
+                };
                 Ok(Message::Punch {
                     addr: SocketAddr::new(ip.into(), port),
+                    spray_range,
                 })
             }
 
@@ -344,7 +351,7 @@ impl Message {
                 buf
             }
 
-            Message::Punch { addr } => {
+            Message::Punch { addr, spray_range } => {
                 let ip = match addr {
                     SocketAddr::V4(a) => *a.ip(),
                     SocketAddr::V6(_) => Ipv4Addr::UNSPECIFIED,
@@ -354,6 +361,11 @@ impl Message {
                 let mut port_bytes = [0u8; 2];
                 BigEndian::write_u16(&mut port_bytes, addr.port());
                 buf.extend_from_slice(&port_bytes);
+                if *spray_range > 0 {
+                    let mut sr = [0u8; 2];
+                    BigEndian::write_u16(&mut sr, *spray_range);
+                    buf.extend_from_slice(&sr);
+                }
                 buf
             }
 
@@ -472,10 +484,19 @@ mod tests {
     #[test]
     fn roundtrip_punch() {
         let addr = SocketAddr::new(Ipv4Addr::new(203, 0, 113, 42).into(), 12345);
-        let msg = Message::Punch { addr };
+        let msg = Message::Punch { addr, spray_range: 0 };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert_eq!(parsed, Message::Punch { addr });
+        assert_eq!(parsed, Message::Punch { addr, spray_range: 0 });
+    }
+
+    #[test]
+    fn roundtrip_punch_with_spray() {
+        let addr = SocketAddr::new(Ipv4Addr::new(203, 0, 113, 42).into(), 12345);
+        let msg = Message::Punch { addr, spray_range: 10_000 };
+        let bytes = msg.to_bytes();
+        let parsed = Message::parse(&bytes).unwrap();
+        assert_eq!(parsed, Message::Punch { addr, spray_range: 10_000 });
     }
 
     #[test]
@@ -487,11 +508,20 @@ mod tests {
             SocketAddr::new(Ipv4Addr::new(10, 0, 0, 1).into(), 8080),
         ];
         for addr in addrs {
-            let msg = Message::Punch { addr };
+            let msg = Message::Punch { addr, spray_range: 0 };
             let bytes = msg.to_bytes();
             let parsed = Message::parse(&bytes).unwrap();
-            assert_eq!(parsed, Message::Punch { addr });
+            assert_eq!(parsed, Message::Punch { addr, spray_range: 0 });
         }
+    }
+
+    #[test]
+    fn punch_backward_compat_no_spray_range() {
+        // Old-format Punch (8 bytes, no spray_range) should parse as spray_range=0
+        let bytes = vec![MAGIC, 0x06, 192, 168, 1, 1, 0x1F, 0x90]; // 192.168.1.1:8080
+        let parsed = Message::parse(&bytes).unwrap();
+        let expected_addr = SocketAddr::new(Ipv4Addr::new(192, 168, 1, 1).into(), 8080);
+        assert_eq!(parsed, Message::Punch { addr: expected_addr, spray_range: 0 });
     }
 
     #[test]
@@ -591,7 +621,8 @@ mod tests {
         );
         assert_eq!(
             Message::Punch {
-                addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+                addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0),
+                spray_range: 0,
             }
             .to_bytes()[1],
             0x06
@@ -631,13 +662,25 @@ mod tests {
         );
         assert_eq!(Message::Heartbeat { port: 0 }.to_bytes().len(), 4);
         assert_eq!(Message::Error { port: 0 }.to_bytes().len(), 4);
+        // Punch with spray_range=0 omits the 2-byte spray field
         assert_eq!(
             Message::Punch {
-                addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+                addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0),
+                spray_range: 0,
             }
             .to_bytes()
             .len(),
             8
+        );
+        // Punch with spray_range>0 appends 2-byte spray field
+        assert_eq!(
+            Message::Punch {
+                addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0),
+                spray_range: 10_000,
+            }
+            .to_bytes()
+            .len(),
+            10
         );
         assert_eq!(
             Message::Neighbors {

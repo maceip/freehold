@@ -132,6 +132,10 @@ impl Server {
                 }
 
                 let now = ktime_get_ns();
+                let relay_ip_be = self
+                    .primary_ip
+                    .map(|ip| u32::from(ip).to_be())
+                    .unwrap_or(0);
                 let reg = Registration {
                     tokens: freehold_common::rate_limit::MAX_BURST,
                     last_refill: now,
@@ -139,6 +143,11 @@ impl Server {
                     home_port: from.port(),
                     _pad1: 0,
                     expiry: now + timing::REGISTRATION_TTL.as_nanos() as u64,
+                    relay_ip: relay_ip_be,
+                    client_ip: 0,
+                    client_port: 0,
+                    _pad2: 0,
+                    _pad3: 0,
                 };
                 self.registrations
                     .write()
@@ -324,6 +333,7 @@ async fn process_xdp_events(
     mut perf_array: AsyncPerfEventArray<aya::maps::MapData>,
     verbose: bool,
     punch_socket: Arc<UdpSocket>,
+    registrations: Arc<RwLock<HashMap<aya::maps::MapData, u16, Registration>>>,
 ) {
     let cpus = online_cpus().expect("get online CPUs");
 
@@ -333,6 +343,7 @@ async fn process_xdp_events(
             .expect("open perf buffer for CPU");
 
         let punch_socket = punch_socket.clone();
+        let registrations = registrations.clone();
 
         tokio::spawn(async move {
             let mut punch_tracker = PunchTracker {
@@ -404,49 +415,95 @@ async fn process_xdp_events(
                                             );
                                         }
 
-                                        // NAT hole-punch: send Punch to Bob for new sources
-                                        let key = (src_ip, event.src_port, event.dst_port);
-                                        let now = Instant::now();
+                                        // Event is now pre-rewrite: dst_port is the relay port,
+                                        // src_ip:src_port is Alice's address.
+                                        // Look up registration to get Bob's home address.
+                                        let relay_port = event.dst_port;
 
-                                        let is_new = match punch_tracker.seen.get(&key) {
-                                            None => true,
-                                            Some(t) => now.duration_since(*t) >= PUNCH_SEEN_TTL,
+                                        // Update client address in registration for reverse path
+                                        let home_addr = {
+                                            let mut regs = registrations.write().await;
+                                            match regs.get(&relay_port, 0) {
+                                                Ok(mut reg) => {
+                                                    let home_addr = SocketAddr::new(
+                                                        Ipv4Addr::from(
+                                                            u32::from_be(reg.home_ip),
+                                                        )
+                                                        .into(),
+                                                        reg.home_port,
+                                                    );
+                                                    let client_ip_be =
+                                                        u32::from(src_ip).to_be();
+                                                    if reg.client_ip != client_ip_be
+                                                        || reg.client_port != event.src_port
+                                                    {
+                                                        reg.client_ip = client_ip_be;
+                                                        reg.client_port = event.src_port;
+                                                        let _ = regs.insert(
+                                                            relay_port, reg, 0,
+                                                        );
+                                                    }
+                                                    Some(home_addr)
+                                                }
+                                                Err(_) => None,
+                                            }
                                         };
 
-                                        if is_new {
-                                            punch_tracker.seen.insert(key, now);
+                                        // NAT hole-punch: send Punch to Bob for new sources
+                                        if let Some(home_addr) = home_addr {
+                                            let key =
+                                                (src_ip, event.src_port, relay_port);
+                                            let now = Instant::now();
 
-                                            // XDP already rewrote dst to home_ip:home_port,
-                                            // so the event contains Bob's address directly
-                                            let home_addr =
-                                                SocketAddr::new(dst_ip.into(), event.dst_port);
-                                            let punch_msg = Message::Punch {
-                                                addr: SocketAddr::new(
-                                                    src_ip.into(),
-                                                    event.src_port,
-                                                ),
-                                            };
-                                            if let Err(e) = punch_socket
-                                                .send_to(&punch_msg.to_bytes(), home_addr)
-                                            {
-                                                warn!(
-                                                    "Failed to send Punch to {}: {}",
-                                                    home_addr, e
-                                                );
-                                            } else {
-                                                debug!(
-                                                    "Punch: sent {}:{} -> {}",
-                                                    src_ip, event.src_port, home_addr
-                                                );
+                                            let is_new =
+                                                match punch_tracker.seen.get(&key) {
+                                                    None => true,
+                                                    Some(t) => {
+                                                        now.duration_since(*t)
+                                                            >= PUNCH_SEEN_TTL
+                                                    }
+                                                };
+
+                                            if is_new {
+                                                punch_tracker.seen.insert(key, now);
+
+                                                let punch_msg = Message::Punch {
+                                                    addr: SocketAddr::new(
+                                                        src_ip.into(),
+                                                        event.src_port,
+                                                    ),
+                                                    spray_range: 10_000,
+                                                };
+                                                if let Err(e) = punch_socket
+                                                    .send_to(
+                                                        &punch_msg.to_bytes(),
+                                                        home_addr,
+                                                    )
+                                                {
+                                                    warn!(
+                                                        "Failed to send Punch to {}: {}",
+                                                        home_addr, e
+                                                    );
+                                                } else {
+                                                    debug!(
+                                                        "Punch: sent {}:{} -> {}",
+                                                        src_ip,
+                                                        event.src_port,
+                                                        home_addr
+                                                    );
+                                                }
                                             }
-                                        }
 
-                                        // Periodic prune of stale entries
-                                        if now.duration_since(last_prune) >= PUNCH_SEEN_TTL {
-                                            punch_tracker.seen.retain(|_, t| {
-                                                now.duration_since(*t) < PUNCH_SEEN_TTL
-                                            });
-                                            last_prune = now;
+                                            // Periodic prune of stale entries
+                                            if now.duration_since(last_prune)
+                                                >= PUNCH_SEEN_TTL
+                                            {
+                                                punch_tracker.seen.retain(|_, t| {
+                                                    now.duration_since(*t)
+                                                        < PUNCH_SEEN_TTL
+                                                });
+                                                last_prune = now;
+                                            }
                                         }
                                     }
                                     None => {
@@ -574,7 +631,7 @@ async fn main() -> Result<()> {
 
     let punch_socket = Arc::new(socket.try_clone().context("clone socket for punch")?);
 
-    process_xdp_events(perf_array, verbose_events, punch_socket).await;
+    process_xdp_events(perf_array, verbose_events, punch_socket, registrations.clone()).await;
 
     // Initialize DNS manager if enabled
     let dns_manager = if config.dns.enabled {

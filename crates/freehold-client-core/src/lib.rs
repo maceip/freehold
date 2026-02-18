@@ -611,14 +611,28 @@ impl Engine {
                 }
             }
 
-            Message::Punch { addr } => {
+            Message::Punch { addr, spray_range } => {
                 // Only accept Punch from a known relay
                 if self.relays.iter().any(|r| r.addr.port() == from.port()) {
-                    if let Err(e) = self.socket.send_to(&[0x00], addr) {
-                        warn!("NAT punch failed to {}: {}", addr, e);
+                    if spray_range > 0 {
+                        let base_port = addr.port();
+                        let half = spray_range / 2;
+                        let start = base_port.saturating_sub(half);
+                        let end = base_port.saturating_add(half).min(65535);
+                        for port in start..=end {
+                            let target = SocketAddr::new(addr.ip(), port);
+                            let _ = self.socket.send_to(&[0x00], target);
+                        }
+                        let count = (end - start + 1) as u64;
+                        self.bytes_sent += count;
+                        debug!("NAT spray: {} ports around {}:{}", count, addr.ip(), base_port);
                     } else {
-                        self.bytes_sent += 1;
-                        debug!("NAT punch: sent UDP to {}", addr);
+                        if let Err(e) = self.socket.send_to(&[0x00], addr) {
+                            warn!("NAT punch failed to {}: {}", addr, e);
+                        } else {
+                            self.bytes_sent += 1;
+                            debug!("NAT punch: sent UDP to {}", addr);
+                        }
                     }
                 }
             }

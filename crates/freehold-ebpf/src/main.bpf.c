@@ -25,13 +25,18 @@
 #define EVENT_FORWARD          4
 
 struct registration {
-    __u64 tokens;
-    __u64 last_refill;
-    __u32 home_ip;
-    __u16 home_port;
-    __u16 _pad1;
-    __u64 expiry;
-};
+    __u64 tokens;       // offset 0
+    __u64 last_refill;  // offset 8
+    __u32 home_ip;      // offset 16
+    __u16 home_port;    // offset 20
+    __u16 _pad1;        // offset 22
+    __u64 expiry;       // offset 24
+    __u32 relay_ip;     // offset 32 - relay's own IP for SNAT
+    __u32 client_ip;    // offset 36 - last client IP (0 = unknown)
+    __u16 client_port;  // offset 40 - last client port
+    __u16 _pad2;        // offset 42
+    __u32 _pad3;        // offset 44
+};  // 48 bytes
 
 // Event sent to userspace via perf buffer
 struct event {
@@ -153,20 +158,45 @@ int freehold_ingress(struct xdp_md *ctx) {
     }
     reg->tokens -= pkt_len;
 
+    // Detect direction: is this from Bob (home) or from Alice (client)?
+    int is_reverse = (ip->saddr == reg->home_ip);
+
     // Swap MAC addresses for XDP_TX (send back out same interface)
     __u8 tmp_mac[ETH_ALEN];
     __builtin_memcpy(tmp_mac, eth->h_dest, ETH_ALEN);
     __builtin_memcpy(eth->h_dest, eth->h_source, ETH_ALEN);
     __builtin_memcpy(eth->h_source, tmp_mac, ETH_ALEN);
 
-    // Rewrite destination IP and port
-    __u32 old_daddr = ip->daddr;
-    ip->daddr = reg->home_ip;
-    udp->dest = bpf_htons(reg->home_port);
-    update_ip_csum(ip, old_daddr, reg->home_ip);
-    udp->check = 0;
+    if (is_reverse) {
+        // Reverse path: Bob -> Alice
+        // DNAT to client_ip:client_port, SNAT to relay_ip
+        if (reg->client_ip == 0 || reg->relay_ip == 0)
+            return XDP_PASS;  // No client address yet, let kernel handle
 
-    emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD);
+        __u32 old_saddr = ip->saddr;
+        __u32 old_daddr = ip->daddr;
+
+        ip->saddr = reg->relay_ip;
+        ip->daddr = reg->client_ip;
+        udp->dest = bpf_htons(reg->client_port);
+
+        update_ip_csum(ip, old_saddr, reg->relay_ip);
+        update_ip_csum(ip, old_daddr, reg->client_ip);
+        udp->check = 0;
+
+        emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD);
+    } else {
+        // Forward path: Alice -> Bob
+        // Emit event BEFORE rewrite so userspace gets Alice's original address
+        emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD);
+
+        // DNAT to home_ip:home_port
+        __u32 old_daddr = ip->daddr;
+        ip->daddr = reg->home_ip;
+        udp->dest = bpf_htons(reg->home_port);
+        update_ip_csum(ip, old_daddr, reg->home_ip);
+        udp->check = 0;
+    }
 
     return XDP_TX;
 }

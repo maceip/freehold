@@ -12,18 +12,28 @@
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Registration {
     /// Token bucket - remaining byte budget
-    pub tokens: u64,
+    pub tokens: u64,          // offset 0
     /// Last refill timestamp (nanoseconds, CLOCK_MONOTONIC)
-    pub last_refill: u64,
+    pub last_refill: u64,     // offset 8
     /// Destination IP for forwarding (network byte order)
-    pub home_ip: u32,
+    pub home_ip: u32,         // offset 16
     /// Destination port for forwarding (host byte order)
-    pub home_port: u16,
+    pub home_port: u16,       // offset 20
     /// Padding for alignment
-    pub _pad1: u16,
+    pub _pad1: u16,           // offset 22
     /// Registration expiry (nanoseconds, CLOCK_MONOTONIC)
-    pub expiry: u64,
-}
+    pub expiry: u64,          // offset 24
+    /// Relay's own IP for SNAT in reverse path (network byte order)
+    pub relay_ip: u32,        // offset 32
+    /// Last seen client IP for reverse path (network byte order, 0 = unknown)
+    pub client_ip: u32,       // offset 36
+    /// Last seen client port (host byte order)
+    pub client_port: u16,     // offset 40
+    /// Padding for alignment
+    pub _pad2: u16,           // offset 42
+    /// Padding to 48 bytes
+    pub _pad3: u32,           // offset 44
+}                             // 48 bytes
 
 impl Registration {
     pub const SIZE: usize = core::mem::size_of::<Self>();
@@ -104,7 +114,7 @@ mod tests {
 
     #[test]
     fn registration_size() {
-        assert_eq!(Registration::SIZE, 32);
+        assert_eq!(Registration::SIZE, 48);
     }
 
     #[test]
