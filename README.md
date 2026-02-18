@@ -52,25 +52,26 @@ Browser (Alice)                 Freehold Relay                  You (Bob, behind
      |                              |       [eBPF map updated]       |
      |                              |                                |
      |--- QUIC/H3 request -------->|                                |
-     |                              |--- XDP rewrites dst --------->| (NAT may drop)
-     |                              |--- Punch(alice:port) -------->| (control channel)
+     |                              |--- XDP SNAT+DNAT ------------>| (relay path)
+     |                              |--- Punch(alice:port) -------->| (spray 10k ports)
      |                              |                                |
-     |                              |              Bob sends UDP --->| to Alice (opens NAT)
+     |                              |<--- Bob responds to relay ----|
+     |<--- XDP reverse rewrites ---|                                |
      |                              |                                |
-     |--- QUIC retransmit -------->|--- XDP rewrites dst --------->| (NAT allows now)
-     |                              |                                |--- H3 Proxy → backend
-     |<--------- QUIC response directly from Bob -------------------|
+     |  (later, if spray worked:)  |                                |
+     |--- QUIC direct to Bob ----->|                                |--- direct path
+     |<------------- QUIC response directly from Bob ---------------|
 ```
 
 1. **Bob registers** — sends UDP to the relay, completes HMAC challenge, gets added to the eBPF map. The relay assigns a stable subdomain (`<hash>.freehold.lit.app`) and returns it in the Neighbors response
-2. **Alice connects** — sends QUIC to `relay:port`. The XDP program rewrites the destination IP to Bob's address but **leaves Alice's source IP unchanged**
-3. **NAT hole-punch** — if Bob is behind endpoint-dependent NAT, the relay detects the new source and sends a Punch message telling Bob to send a UDP packet to Alice, opening the NAT mapping. QUIC retransmission handles the 1-2s initial latency
-4. **Bob responds directly** — Bob sees Alice's real IP as the packet source and sends the QUIC response straight back to her, bypassing the relay entirely
-5. **Alice's NAT accepts it** — she initiated the outbound UDP, so her NAT allows the reply even though it comes from Bob's IP (QUIC uses connection IDs, not IP tuples)
-6. **Dual-path DNS** — After proving reachability (eBPF map check), Bob sends `CreateRecords`. The relay knows Bob's real public IP (it's the source address of his UDP registration) and creates three DNS names using **both** IPs: `{hash}.relay.zone` A → relay IP (guaranteed path via XDP), `{hash}.home.zone` A → Bob's real IP (direct path, skips relay), and `{hash}.zone` with SVCB records for both so browsers can race them. SDK clients resolve `.home` to learn Bob's real IP and send a UDP probe to open their own NAT for Bob's direct responses
+2. **Alice connects via relay** — sends QUIC to `relay:port`. The XDP program does full **SNAT+DNAT**: rewrites the destination to Bob's address *and* replaces Alice's source IP with the relay's IP. Bob sees the relay as the client
+3. **Bob responds via relay** — Bob's Quinn sends the QUIC response to the relay (the source it saw). The relay's XDP reverse path rewrites it back to Alice's real address. This always works regardless of NAT type
+4. **Port spray (parallel)** — the relay sends a Punch message telling Bob to spray 10,000 UDP packets across ports ±5,000 around Alice's known port. If Alice's carrier NAT allocates ports sequentially, one hit opens Bob's NAT for Alice's direct traffic
+5. **Direct path upgrade** — if spray worked, subsequent QUIC traffic via the `.home` DNS path goes directly between Alice and Bob. The relay drops out of the data path. If spray didn't work, all traffic continues through the relay at XDP wire speed
+6. **Dual-path DNS** — After proving reachability (eBPF map check), Bob sends `CreateRecords`. The relay creates three DNS names using **both** IPs: `{hash}.relay.zone` A → relay IP (guaranteed path via XDP SNAT+DNAT), `{hash}.home.zone` A → Bob's real IP (direct path, skips relay), and `{hash}.zone` with SVCB records for both so browsers can race them
 7. **TLS via DNS-01** — Bob's client runs an ACME DNS-01 flow to obtain a multi-SAN certificate covering all three names, and hot-swaps it into the running QUIC endpoint with zero downtime. When `acme_cache_dir` is set, this happens automatically
 
-The relay is only in the **inbound** path. Alice doesn't install anything — she just uses a browser.
+The relay path always works. The direct path is an optimization. Alice doesn't install anything — she just uses a browser.
 
 ## Features
 

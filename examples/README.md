@@ -23,20 +23,23 @@ address to your laptop — at wire speed, before the packet even reaches
 userspace. It's not proxying. It's address rewriting, like a mail
 forwarding service.
 
-### The optimization
+### The relay path (always works)
 
-After Alice's first packet reaches your laptop (through the relay), your
-laptop sees Alice's real IP address. It sends the response *directly back
-to Alice*, bypassing the relay completely. Alice's NAT accepts this because
-she started the conversation — that's how NATs work, they let replies in.
-From that point on, the relay is out of the picture. It's as if they were
-on the same network.
+The XDP filter does full **SNAT+DNAT**: it rewrites the destination to
+your laptop, *and* replaces Alice's source IP with the relay's own IP.
+Your laptop sees the relay as the client and responds to the relay. The
+relay's XDP catches that response and rewrites it back to Alice. This
+works regardless of NAT type on either side — it's a transparent
+bidirectional relay at wire speed.
 
-If your laptop is behind a tricky NAT that blocks packets from unknown
-sources, the relay tells your laptop "hey, send a UDP packet to Alice
-first." That pokes a hole in your NAT. Now Alice's packets get through.
-This is hole-punching, and QUIC's built-in retransmission covers the 1-2
-second delay while the hole opens.
+### The direct path (optimization)
+
+In parallel, the relay tells your laptop "hey, spray 10,000 UDP packets
+around Alice's port." If Alice's carrier NAT allocates ports sequentially,
+one of those hits opens your NAT for Alice's direct traffic. After that,
+Alice can talk to your laptop via the `.home` DNS path without going
+through the relay. The relay drops out and it's as if they were on the
+same network.
 
 ### The protocol (30-second version)
 
@@ -46,8 +49,9 @@ second delay while the hole opens.
 3. Bob  → Relay:  "Here's my signed cookie"                (UDP)
 4. Relay:          XDP map updated: port 8443 → Bob's IP
 5. Alice → Relay:  QUIC ClientHello to port 8443           (UDP)
-6. Relay:          Kernel rewrites dst → Bob, preserves Alice's src
-7. Bob  → Alice:  QUIC ServerHello directly back           (bypasses relay)
+6. Relay:          XDP SNAT+DNAT: src→relay, dst→Bob       (Bob sees relay as client)
+7. Bob  → Relay:  QUIC ServerHello to relay                (responds to what it saw)
+8. Relay → Alice: XDP reverse: src→relay, dst→Alice        (transparent to Alice)
 ```
 
 That's it. Five message types total: `Register`, `Challenge`, `Confirm`,
@@ -429,25 +433,29 @@ Alice resolves `a7xk2m.freehold.lit.app` and gets two paths: the park
 **Via the park (relay) — always works:**
 ```
 Alice → Relay:  QUIC ClientHello to port 8443
-Kernel:         rewrites dst_ip → Bob's real IP (XDP, wire speed)
-Bob → Alice:    QUIC ServerHello directly back (bypasses relay)
+Kernel:         XDP SNAT+DNAT: src→relay IP, dst→Bob's real IP
+Bob → Relay:    QUIC ServerHello to relay (Bob sees relay as the visitor)
+Kernel:         XDP reverse: src→relay IP, dst→Alice's real IP
+Alice:          gets response from relay IP — her NAT accepts it
 ```
 
-**Meanwhile, Alice probes Bob's building directly:**
+Bob thinks the relay is the visitor. He responds to the relay, and
+the relay passes it back to Alice. Neither side knows the other's
+real address. Works through any NAT.
+
+**Meanwhile, the relay tells Bob to spray Alice's ports:**
 ```
-Alice → Bob:    UDP packet to 176.2.178.102:8443 (from .home A record)
-                Bob's NAT drops it, BUT Alice's NAT now expects replies
-                from Bob's IP. When Bob responds directly (above), Alice's
-                NAT lets it through.
+Relay → Bob:    Punch: "spray 10,000 ports around Alice's port 11697"
+Bob:            sends 10,000 one-byte UDP pokes to ports 6697–16697
+                If one hits Alice's carrier NAT port, Bob's NAT opens
 ```
 
-If Alice is a phone app (SDK client), she resolves `.home` to get
-Bob's real IP and sends a probe packet. This opens her NAT for Bob's
-direct responses. If Alice is a browser, SVCB racing does this
-automatically — the browser tries both the relay and Bob's IP, and
-the first response wins.
+If spray works, Alice can later connect directly via the `.home`
+DNS path without going through the relay. If not, the relay path
+keeps working at wire speed.
 
-Either way, after the first successful exchange, the relay is out of
-the picture. Alice and Bob talk directly.
+If Alice is a browser, SVCB racing tries both paths automatically —
+the first response wins. SDK clients can choose explicitly via
+`.relay` or `.home` subdomains.
 
 Alice pets Bob. Bob wags. The end.

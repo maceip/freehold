@@ -43,12 +43,20 @@ Packet B: Alice → 176.2.178.102:55126   (direct, from .home DNS)
 Alice, so Bob's NAT rejects it. But this packet opens Alice's own NAT:
 Alice's carrier now expects replies from `176.2.178.102:55126`.
 
-### 4. XDP forwards + Punch + Port Spray
+### 4. XDP forwards with full SNAT+DNAT (relay path)
 
-Packet A arrives at the relay. XDP rewrites the destination to Bob and
-forwards it. Bob's NAT may drop this too (source is Alice, not relay).
+Packet A arrives at the relay. XDP does **full SNAT+DNAT**:
+- Destination rewritten to Bob's home address (`176.2.178.102:55126`)
+- Source rewritten from Alice's IP to the **relay's own IP** (`142.248.222.1`)
 
-But the relay also sends a **Punch** message to Bob:
+This is critical. Without SNAT, Bob's Quinn would see Alice's real IP
+as the source and respond directly to her — that response would never
+pass through the relay, so the relay can't help with the return path.
+With SNAT, Bob sees the relay as the client and responds to the relay.
+
+### 5. Punch + Port Spray (parallel, for direct path)
+
+Meanwhile, the relay sends a **Punch** message to Bob:
 "Alice is at `162.120.248.180:11697` — send her a UDP packet."
 
 Bob receives the Punch (it comes from the relay, which Bob's NAT allows).
@@ -60,40 +68,46 @@ one of the 10,000 pokes will hit the right port and open Bob's NAT.
 
 Total cost: ~10KB of one-byte packets, sent in <100ms.
 
-### 5. Retransmission succeeds
+### 6. Bob responds via relay (guaranteed path)
 
-QUIC retransmits automatically. Alice's next QUIC Initial to the relay
-gets forwarded by XDP to Bob. This time Bob's NAT accepts it (the Punch
-in step 4 opened it for Alice's IP).
+Bob's Quinn processes the QUIC Initial and responds to what it sees as
+the source: `142.248.222.1:2000` (the relay). This response hits the
+relay's XDP on the reverse path:
+- Source rewritten from Bob's IP to relay's IP
+- Destination rewritten from relay's IP to Alice's real IP and port
 
-Bob's Quinn processes the QUIC Initial and sends a response **directly**
-to Alice at `162.120.248.180:11697`.
+Alice receives the response from `142.248.222.1:2000` — the exact
+address she sent to. Her NAT accepts it. Connection established.
 
-### 6. Alice's NAT accepts the response
+### 7. Direct path upgrade (if spray worked)
 
-Bob's response comes from `176.2.178.102:55126`. Alice's NAT checks:
-did Alice send to that address? **Yes** — Packet B in step 3 opened
-a pinhole for exactly `176.2.178.102:55126`.
+If the port spray in step 5 opened Bob's NAT for Alice's carrier port,
+subsequent connections via the `.home` DNS path work directly:
+- Alice sends QUIC to Bob's real IP (`176.2.178.102:55126`)
+- Bob's NAT accepts it (spray opened the pinhole)
+- Bob responds directly to Alice
+- Relay is out of the data path
 
-Because Bob's home router is cone NAT, his external port is always
-55126 regardless of destination. This matches Alice's pinhole.
-
-Connection established. The relay is out of the data path.
+If spray didn't work (random port allocation), all traffic continues
+through the relay's XDP at wire speed.
 
 ## Why it works
 
-Two things make this possible:
+The relay path (steps 4+6) **always works** because:
+1. XDP does full SNAT+DNAT — Bob sees the relay as the client, responds
+   to the relay, and the reverse XDP delivers to Alice.
+2. Alice sent to the relay, so her NAT accepts responses from the relay.
 
+The direct path (steps 5+7) works when:
 1. **Bob's home router is cone NAT.** Same external port for all
-   destinations. The port the relay sees is the port Alice sees.
+   destinations — the port in DNS matches what Alice sees.
+2. **Port spray hits Alice's carrier port.** If the carrier allocates
+   sequential ports, one of the 10,000 sprayed ports opens Bob's NAT
+   for Alice's .home traffic.
 
-2. **Alice's .home probe opens a pinhole for Bob's exact address.**
-   Even though the probe gets dropped, Alice's carrier NAT now
-   accepts replies from Bob's IP:port.
-
-The relay only carries data during the 1-2 second window between
-Alice's first packet and the Punch completing. After that, QUIC
-retransmission discovers the direct path automatically.
+The relay carries all data until the direct path is established. After
+that, QUIC connection migration moves traffic to the direct path and
+the relay drops out.
 
 ## Verify NAT type
 
