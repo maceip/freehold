@@ -77,7 +77,7 @@ The relay is only in the **inbound** path. Alice doesn't install anything — sh
 - **Wire-speed forwarding** — eBPF/XDP processes packets in kernel space
 - **Stateless verification** — HMAC cookies prevent spoofing without storing state
 - **Anycast routing** — BGP announces your prefix globally
-- **NAT hole-punching** — Relay-assisted UDP punch opens endpoint-dependent NATs for arbitrary sources
+- **NAT hole-punching** — Relay-assisted UDP punch with port spray (10,000 ports) opens endpoint-dependent NATs; bidirectional XDP relay fallback for random-port NATs
 - **H3/QUIC proxy** — Optional HTTP/3 reverse proxy with automatic TLS
 - **WebSocket over H3** — RFC 9220 Extended CONNECT for WebSocket through QUIC relay
 - **DemuxSocket** — Engine and Quinn share one UDP socket; zero mux code needed

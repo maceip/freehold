@@ -43,7 +43,7 @@ Packet B: Alice → 176.2.178.102:55126   (direct, from .home DNS)
 Alice, so Bob's NAT rejects it. But this packet opens Alice's own NAT:
 Alice's carrier now expects replies from `176.2.178.102:55126`.
 
-### 4. XDP forwards + Punch
+### 4. XDP forwards + Punch + Port Spray
 
 Packet A arrives at the relay. XDP rewrites the destination to Bob and
 forwards it. Bob's NAT may drop this too (source is Alice, not relay).
@@ -52,8 +52,13 @@ But the relay also sends a **Punch** message to Bob:
 "Alice is at `162.120.248.180:11697` — send her a UDP packet."
 
 Bob receives the Punch (it comes from the relay, which Bob's NAT allows).
-Bob sends a 1-byte UDP poke to Alice's address. This opens Bob's NAT
-for Alice's IP.
+Instead of sending a single poke, Bob **sprays** 10,000 one-byte UDP
+packets to ports ±5,000 around Alice's known port (11697). This covers
+the case where Alice's carrier NAT allocates a different port for the
+.home path than the relay path. If the carrier assigns ports sequentially,
+one of the 10,000 pokes will hit the right port and open Bob's NAT.
+
+Total cost: ~10KB of one-byte packets, sent in <100ms.
 
 ### 5. Retransmission succeeds
 
@@ -90,7 +95,9 @@ The relay only carries data during the 1-2 second window between
 Alice's first packet and the Punch completing. After that, QUIC
 retransmission discovers the direct path automatically.
 
-## Verify Bob's NAT type
+## Verify NAT type
+
+### Bob's NAT
 
 Run on Bob's machine:
 
@@ -101,6 +108,19 @@ python3 stun_test.py
 If it says `CONE`, the direct path will work. If it says `SYMMETRIC`,
 Bob's external port changes per destination and the direct path will
 not reliably work (the relay would need to proxy responses).
+
+### Alice's NAT (carrier port allocation)
+
+Run on Alice's phone (or any device behind carrier NAT):
+
+```
+python3 tools/nat_port_test.py
+```
+
+This tests whether the carrier allocates ports sequentially, randomly,
+or in clusters. If ports are sequential or clustered within a range of
+10,000, port spray will work. If they're fully random, the bidirectional
+XDP relay fallback will be used instead.
 
 ## Common issues
 
@@ -113,12 +133,16 @@ Bob's response. Check:
 
 **Works on WiFi but not cellular:**
 The phone's carrier NAT may be port-restricted in a way that rejects
-Bob's response. The relay path (`hash.relay.zone`) should still work
-as a fallback since XDP forwards the data and Bob responds directly.
+Bob's response. Port spray handles the common case (sequential port
+allocation). If spray doesn't work, the bidirectional XDP relay
+provides a fallback — the relay does SNAT+DNAT both directions at
+wire speed, so Bob's responses go through the relay back to Alice.
+
+Run `tools/nat_port_test.py` on the phone to check port patterns.
 
 **Bob's NAT is SYMMETRIC:**
 The direct path won't work. Bob's external port for Alice differs from
 the port in DNS. You'll need to either:
 - Replace the router with one that does cone NAT (most consumer routers)
 - Use UPnP if the router supports it
-- Accept relay-proxied traffic (future feature)
+- The bidirectional XDP relay handles this automatically as a fallback

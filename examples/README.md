@@ -52,7 +52,9 @@ second delay while the hole opens.
 
 That's it. Five message types total: `Register`, `Challenge`, `Confirm`,
 `Heartbeat`, `Punch`. Each one is a small UDP packet starting with the
-byte `0x46` (ASCII "F" for Freehold).
+byte `0x46` (ASCII "F" for Freehold). `Punch` includes a `spray_range`
+field — when non-zero, Bob sprays that many ports around Alice's known
+port to handle carrier NATs that allocate different ports per destination.
 
 ### What about TLS certificates?
 
