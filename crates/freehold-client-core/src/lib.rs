@@ -367,6 +367,8 @@ impl Engine {
         let mut buf = [0u8; 1500];
         let mut last_traffic_update = Instant::now();
         let traffic_update_interval = std::time::Duration::from_secs(1);
+        let mut last_nat_keepalive = Instant::now();
+        let nat_keepalive_interval = std::time::Duration::from_secs(10);
 
         loop {
             // Check for commands - collect first to avoid borrow issues
@@ -478,6 +480,22 @@ impl Engine {
                     received: self.bytes_received,
                 });
                 last_traffic_update = now;
+            }
+
+            // NAT keepalive: send dummy to relay:data_port every 10s
+            // to keep symmetric NAT mapping alive for XDP-forwarded traffic.
+            if now.duration_since(last_nat_keepalive) >= nat_keepalive_interval {
+                for i in 0..self.relays.len() {
+                    if self.relays[i].state == RelayState::Connected {
+                        let addr = self.relays[i].addr;
+                        let relay_data_addr = SocketAddr::new(addr.ip(), self.port);
+                        if relay_data_addr != addr {
+                            let _ = self.socket.send_to(&[0x00], relay_data_addr);
+                            self.bytes_sent += 1;
+                        }
+                    }
+                }
+                last_nat_keepalive = now;
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -606,6 +624,11 @@ impl Engine {
                         addr: from,
                         state: RelayState::Connected,
                     });
+
+                    // Always request DNS records on connect so dual-path
+                    // DNS (relay + .home A/HTTPS) is available for clients.
+                    info!("Sending CreateRecords to relay");
+                    self.send_confirm(idx, ConfirmAction::CreateRecords);
 
                     // Open NAT mapping for the registered port immediately.
                     // The relay's XDP forwards traffic with src=relay_ip:registered_port;

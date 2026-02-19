@@ -136,16 +136,32 @@ impl Server {
                     .primary_ip
                     .map(|ip| u32::from(ip).to_be())
                     .unwrap_or(0);
+
+                // Preserve XDP-learned fields (nat_port, client_ip/port)
+                // from existing registration so re-confirms don't wipe them.
+                let (prev_nat_port, prev_client_ip, prev_client_port) =
+                    match self.registrations.read().await.get(&port, 0) {
+                        Ok(existing) => {
+                            let same_ip = existing.home_ip == u32::from(ip).to_be();
+                            if same_ip {
+                                (existing.nat_port, existing.client_ip, existing.client_port)
+                            } else {
+                                (0, 0, 0)
+                            }
+                        }
+                        Err(_) => (0, 0, 0),
+                    };
+
                 let reg = Registration {
                     tokens: freehold_common::rate_limit::MAX_BURST,
                     last_refill: now,
                     home_ip: u32::from(ip).to_be(),
                     home_port: from.port(),
-                    nat_port: 0,
+                    nat_port: prev_nat_port,
                     expiry: now + timing::REGISTRATION_TTL.as_nanos() as u64,
                     relay_ip: relay_ip_be,
-                    client_ip: 0,
-                    client_port: 0,
+                    client_ip: prev_client_ip,
+                    client_port: prev_client_port,
                     _pad2: 0,
                     _pad3: 0,
                 };

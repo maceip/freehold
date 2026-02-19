@@ -222,10 +222,11 @@ int freehold_ingress(struct xdp_md *ctx) {
             // Debug: log post-rewrite addresses
             emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD_POST);
         } else {
-            // Legacy: DNAT only, Bob responds directly to Alice
+            // DNAT only: rewrite dst, preserve Alice's src IP
             __u32 old_daddr = ip->daddr;
             ip->daddr = reg->home_ip;
-            udp->dest = bpf_htons(reg->home_port);
+            __u16 fwd_dst_port = reg->nat_port ? reg->nat_port : reg->home_port;
+            udp->dest = bpf_htons(fwd_dst_port);
             update_ip_csum(ip, old_daddr, reg->home_ip);
             udp->check = 0;
         }
