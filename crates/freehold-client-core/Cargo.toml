@@ -33,6 +33,7 @@ dirs = { version = "6", optional = true }
 [features]
 default = ["h3-proxy"]
 h3-proxy = ["freehold-h3-proxy", "quinn"]
+webtransport = ["h3-proxy"]
 acme = ["instant-acme", "rcgen", "rustls", "rustls-pemfile", "serde", "serde_json", "dirs", "h3-proxy"]
 
 [dev-dependencies]

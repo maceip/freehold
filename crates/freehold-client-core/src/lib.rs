@@ -96,6 +96,12 @@ mod demux {
         }
 
         fn try_send(&self, transmit: &quinn::udp::Transmit) -> io::Result<()> {
+            tracing::debug!(
+                "DemuxSocket: SEND {} bytes to {} first_byte=0x{:02x}",
+                transmit.contents.len(),
+                transmit.destination,
+                transmit.contents.first().copied().unwrap_or(0)
+            );
             self.io
                 .try_send_to(transmit.contents, transmit.destination)
                 .map(|_| ())
@@ -118,6 +124,10 @@ mod demux {
                             continue;
                         }
                         // QUIC packet — return to Quinn
+                        tracing::debug!(
+                            "DemuxSocket: QUIC pkt from {} len={} first_byte=0x{:02x}",
+                            addr, len, bufs[0][0]
+                        );
                         meta[0] = RecvMeta {
                             addr,
                             len,

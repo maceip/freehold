@@ -19,7 +19,7 @@ freehold-client-core = { workspace = true, features = ["h3-proxy"] }
 uniffi = { version = "0.29" }
 
 # Async runtime
-tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "net"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "net", "io-util"] }
 
 # Error handling
 anyhow.workspace = true
@@ -31,6 +31,15 @@ tracing-subscriber.workspace = true
 
 # Networking
 bytes.workspace = true
+
+# HTTP/3 + WebTransport (client)
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+h3 = { path = "../../vendor/h3-patched/h3" }
+h3-quinn = { path = "../../vendor/h3-patched/h3-quinn", features = ["datagram"] }
+h3-webtransport = { path = "../../vendor/h3-patched/h3-webtransport" }
+h3-datagram = { path = "../../vendor/h3-patched/h3-datagram" }
+http = "1.2"
 
 # Android-specific
 jni = "0.21"

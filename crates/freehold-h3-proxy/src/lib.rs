@@ -136,6 +136,7 @@ pub async fn serve_h3(
 }
 
 async fn handle_connection(incoming: quinn::Incoming, backend: SocketAddr) -> Result<()> {
+    info!("Quinn INCOMING from {} (handshake starting)", incoming.remote_address());
     let connection = incoming.await.context("accept connection")?;
     let remote = connection.remote_address();
     info!("H3 connection from {}", remote);
