@@ -19,8 +19,8 @@ pub struct Registration {
     pub home_ip: u32,         // offset 16
     /// Destination port for forwarding (host byte order)
     pub home_port: u16,       // offset 20
-    /// Padding for alignment
-    pub _pad1: u16,           // offset 22
+    /// NAT-mapped port for relay:relay_port direction (0 = use home_port)
+    pub nat_port: u16,        // offset 22
     /// Registration expiry (nanoseconds, CLOCK_MONOTONIC)
     pub expiry: u64,          // offset 24
     /// Relay's own IP for SNAT in reverse path (network byte order)
@@ -50,6 +50,7 @@ pub enum EventType {
     DropExpired = 2,
     DropNoReg = 3,
     Forward = 4,
+    ForwardPost = 5,
 }
 
 impl EventType {
@@ -59,6 +60,7 @@ impl EventType {
             2 => Some(Self::DropExpired),
             3 => Some(Self::DropNoReg),
             4 => Some(Self::Forward),
+            5 => Some(Self::ForwardPost),
             _ => None,
         }
     }

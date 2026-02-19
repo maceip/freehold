@@ -141,7 +141,7 @@ impl Server {
                     last_refill: now,
                     home_ip: u32::from(ip).to_be(),
                     home_port: from.port(),
-                    _pad1: 0,
+                    nat_port: 0,
                     expiry: now + timing::REGISTRATION_TTL.as_nanos() as u64,
                     relay_ip: relay_ip_be,
                     client_ip: 0,
@@ -504,6 +504,18 @@ async fn process_xdp_events(
                                                 });
                                                 last_prune = now;
                                             }
+                                        }
+                                    }
+                                    Some(EventType::ForwardPost) => {
+                                        if verbose {
+                                            debug!(
+                                                "XDP FWD-POST: {}:{} -> {}:{} ({} bytes)",
+                                                src_ip,
+                                                event.src_port,
+                                                dst_ip,
+                                                event.dst_port,
+                                                event.pkt_len
+                                            );
                                         }
                                     }
                                     None => {

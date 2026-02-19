@@ -23,13 +23,14 @@
 #define EVENT_DROP_EXPIRED     2
 #define EVENT_DROP_NO_REG      3
 #define EVENT_FORWARD          4
+#define EVENT_FORWARD_POST     5  // post-rewrite debug
 
 struct registration {
     __u64 tokens;       // offset 0
     __u64 last_refill;  // offset 8
     __u32 home_ip;      // offset 16
     __u16 home_port;    // offset 20
-    __u16 _pad1;        // offset 22
+    __u16 nat_port;     // offset 22 - NAT-mapped port for relay:R_port (0 = use home_port)
     __u64 expiry;       // offset 24
     __u32 relay_ip;     // offset 32 - relay's own IP for SNAT
     __u32 client_ip;    // offset 36 - last client IP (0 = unknown)
@@ -169,6 +170,11 @@ int freehold_ingress(struct xdp_md *ctx) {
 
     if (is_reverse) {
         // Reverse path: Bob -> Relay -> Alice
+        // Learn Bob's NAT-mapped port for this relay port direction.
+        // With symmetric NAT, this may differ from home_port.
+        __u16 bob_port = bpf_ntohs(udp->source);
+        reg->nat_port = bob_port;
+
         // Bob responded to relay_ip:dest_port (the registered port).
         // Rewrite: src=relay_ip:dest_port, dst=client_ip:client_port
         // so Alice sees the response from the address she originally sent to.
@@ -205,11 +211,16 @@ int freehold_ingress(struct xdp_md *ctx) {
             ip->saddr = reg->relay_ip;
             ip->daddr = reg->home_ip;
             udp->source = bpf_htons(dest_port);  // relay_port — Bob responds here
-            udp->dest = bpf_htons(reg->home_port);
+            // Use nat_port if learned (symmetric NAT), else fall back to home_port
+            __u16 fwd_dst_port = reg->nat_port ? reg->nat_port : reg->home_port;
+            udp->dest = bpf_htons(fwd_dst_port);
 
             update_ip_csum(ip, old_saddr, reg->relay_ip);
             update_ip_csum(ip, old_daddr, reg->home_ip);
             udp->check = 0;
+
+            // Debug: log post-rewrite addresses
+            emit_event(ctx, ip, udp, pkt_len, EVENT_FORWARD_POST);
         } else {
             // Legacy: DNAT only, Bob responds directly to Alice
             __u32 old_daddr = ip->daddr;
