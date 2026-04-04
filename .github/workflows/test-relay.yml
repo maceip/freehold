@@ -58,155 +58,29 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Improved cache key strategy (#11)
-      - name: Cache cargo registry
+      - name: Setup Cargo cache
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ matrix.crate }}-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ matrix.crate }}-
             ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
             ${{ runner.os }}-cargo-
 
-      - name: Run library tests
-        run: |
-          echo "=== ${{ matrix.display }} Tests ==="
-          cargo test --package ${{ matrix.crate }} --lib -- --nocapture
-
-      - name: Run property-based tests (if any)
-        run: |
-          echo "=== Property-Based Tests ==="
-          cargo test --package ${{ matrix.crate }} --lib proptests -- --nocapture || echo "No proptest tests found"
+      - name: Run tests for ${{ matrix.display }}
+        run: cargo test --package ${{ matrix.crate }} --verbose
 
   # ============================================
-  # SERVER LOGIC TESTS - Cookie & Quota
-  # Needs library-tests to ensure shared deps are built (#10)
+  # SERVER TESTS
   # ============================================
-  server-logic-tests:
-    name: Server Logic Tests
+  server-tests:
+    name: Server Tests
     runs-on: ubuntu-latest
-    needs: [library-tests]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Required packages - must succeed (#8)
-      - name: Install required system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            pkg-config \
-            libssl-dev
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # Improved cache key strategy (#11)
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-server-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-server-
-            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
-            ${{ runner.os }}-cargo-
-
-      - name: Run cookie tests
-        run: |
-          echo "=== Cookie Authentication Tests ==="
-          cargo test --package freehold-server --lib cookie -- --nocapture
-
-      - name: Run quota tests
-        run: |
-          echo "=== Quota Tracking Tests ==="
-          cargo test --package freehold-server --lib quota -- --nocapture
-
-      - name: Run all server library tests
-        run: |
-          echo "=== All Server Library Tests ==="
-          cargo test --package freehold-server --lib -- --nocapture
-
-  # ============================================
-  # UNIT TESTS - Full workspace (excludes platform-specific)
-  # Needs library-tests for cache warm-up (#10)
-  # ============================================
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    needs: [library-tests]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Required packages - must succeed (#8)
-      - name: Install required system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            pkg-config \
-            libssl-dev \
-            clang \
-            llvm
-
-      # Optional GUI dependencies - can fail (#8)
-      - name: Install optional GUI dependencies
-        run: |
-          sudo apt-get install -y \
-            libglib2.0-dev \
-            libgtk-4-dev \
-            libadwaita-1-dev || echo "Optional GUI dependencies not available (non-fatal)"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # Improved cache key strategy (#11)
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-test-
-            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
-            ${{ runner.os }}-cargo-
-
-      - name: Run unit tests
-        run: |
-          cargo test --workspace \
-            --exclude freehold-ebpf \
-            --exclude freehold-android-bridge \
-            --exclude freehold-platform-windows
-
-      - name: Test summary
-        run: |
-          echo "=== Test Summary ==="
-          cargo test --workspace \
-            --exclude freehold-ebpf \
-            --exclude freehold-android-bridge \
-            --exclude freehold-platform-windows \
-            -- --list 2>/dev/null | grep -E "^[a-z].*: test$" | wc -l | xargs echo "Total tests:"
-
-  # ============================================
-  # E2E INTEGRATION TESTS (no eBPF)
-  # Needs server-logic-tests to ensure server is tested first (#10)
-  # ============================================
-  e2e-integration-tests:
-    name: E2E Integration Tests
-    runs-on: ubuntu-latest
-    needs: [server-logic-tests, library-tests]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -214,26 +88,80 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Improved cache key strategy (#11)
-      - name: Cache cargo registry
+      - name: Setup Cargo cache
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-e2e-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-e2e-
             ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
             ${{ runner.os }}-cargo-
 
-      - name: Run E2E tests
-        run: |
-          echo "=== E2E Integration Tests ==="
-          cargo test --package freehold-e2e-tests --lib -- --nocapture
+      - name: Run server tests
+        run: cargo test --package freehold-server --verbose
 
-      - name: Run server integration tests
-        run: |
-          echo "=== Server Integration Tests ==="
-          cargo test --package freehold-server --test integration -- --nocapture
+  # ============================================
+  # CLIENT TESTS
+  # ============================================
+  client-tests:
+    name: Client Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Run client tests
+        run: cargo test --package freehold-client --verbose
+
+  # ============================================
+  # INTEGRATION TESTS
+  # ============================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [library-tests, server-tests, client-tests]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Run integration tests
+        run: cargo test --workspace --verbose

@@ -57,18 +57,9 @@ jobs:
             binary: scute-service
             cross: true
 
-          # --- Linux RISC-V 64 (gnu — musl not yet tier 2) ---
-          - name: linux-riscv64
-            runner: ubuntu-latest
-            target: riscv64gc-unknown-linux-gnu
-            npm-os: linux
-            npm-cpu: riscv64
-            binary: scute-service
-            cross: true
-
-          # --- macOS x86_64 (cross-compile from ARM runner) ---
-          - name: darwin-x64
-            runner: macos-latest
+          # --- macOS x86_64 ---
+          - name: macos-x64
+            runner: macos-13
             target: x86_64-apple-darwin
             npm-os: darwin
             npm-cpu: x64
@@ -76,8 +67,8 @@ jobs:
             cross: false
 
           # --- macOS ARM64 (Apple Silicon) ---
-          - name: darwin-arm64
-            runner: macos-latest
+          - name: macos-arm64
+            runner: macos-14
             target: aarch64-apple-darwin
             npm-os: darwin
             npm-cpu: arm64
@@ -85,7 +76,7 @@ jobs:
             cross: false
 
           # --- Windows x86_64 ---
-          - name: win32-x64
+          - name: windows-x64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             npm-os: win32
@@ -93,15 +84,6 @@ jobs:
             binary: scute-service.exe
             cross: false
 
-          # --- Windows ARM64 ---
-          - name: win32-arm64
-            runner: windows-latest
-            target: aarch64-pc-windows-msvc
-            npm-os: win32
-            npm-cpu: arm64
-            binary: scute-service.exe
-            cross: false
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -111,346 +93,36 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Cache cargo
+      - name: Install cross compilation tools
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Setup Cargo cache
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-scute-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-scute-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
 
-      # --- Linux musl toolchain ---
-      - name: Install musl tools (Linux x64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      # --- Cross compilation via `cross` ---
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --locked
-
-      # --- Build ---
-      - name: Build (native)
-        if: "!matrix.cross"
-        run: cargo build --release --target ${{ matrix.target }} -p freehold-scute --bin scute-service
-
-      - name: Build (cross)
-        if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p freehold-scute --bin scute-service
-
-      # --- Package for npm ---
-      - name: Package binary
-        shell: bash
+      - name: Build binary
         run: |
-          mkdir -p npm-pkg/bin
-          cp target/${{ matrix.target }}/release/${{ matrix.binary }} npm-pkg/bin/
-
-          cat > npm-pkg/package.json << 'EOF'
-          {
-            "name": "@mac!/${{ matrix.name }}",
-            "version": "0.1.0",
-            "description": "Scute binary for ${{ matrix.name }}",
-            "os": ["${{ matrix.npm-os }}"],
-            "cpu": ["${{ matrix.npm-cpu }}"],
-            "files": ["bin/"],
-            "license": "MIT",
-            "repository": {
-              "type": "git",
-              "url": "https://github.com/maceip/freehold"
-            }
-          }
-          EOF
-
-          echo "=== Package contents ==="
-          ls -lhR npm-pkg/
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --package freehold-scute
+          else
+            cargo build --release --target ${{ matrix.target }} --package freehold-scute
+          fi
+        shell: bash
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: scute-${{ matrix.name }}
-          path: npm-pkg/
-          retention-days: 30
-
-  # ===========================================================================
-  # Android shared libraries (cdylib .so for FFI)
-  # ===========================================================================
-  build-android:
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: android-arm64
-            target: aarch64-linux-android
-            abi: arm64-v8a
-            npm-cpu: arm64
-
-          - name: android-arm
-            target: armv7-linux-androideabi
-            abi: armeabi-v7a
-            npm-cpu: arm
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk
-
-      - name: Set up Android NDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK
-        run: sdkmanager "ndk;27.2.12479018"
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-scute-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-scute-${{ matrix.target }}-
-
-      - name: Build cdylib
-        run: |
-          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
-          cargo ndk -t ${{ matrix.target }} build --release -p freehold-scute --lib
-
-      - name: Package library
-        run: |
-          mkdir -p npm-pkg/lib/${{ matrix.abi }}
-
-          find target/${{ matrix.target }}/release -name "libfreehold_scute.so" -exec cp {} npm-pkg/lib/${{ matrix.abi }}/ \;
-
-          cat > npm-pkg/package.json << 'EOF'
-          {
-            "name": "@mac!/${{ matrix.name }}",
-            "version": "0.1.0",
-            "description": "Scute shared library for ${{ matrix.name }}",
-            "os": ["android"],
-            "cpu": ["${{ matrix.npm-cpu }}"],
-            "files": ["lib/"],
-            "license": "MIT",
-            "repository": {
-              "type": "git",
-              "url": "https://github.com/maceip/freehold"
-            }
-          }
-          EOF
-
-          # Generate C header
-          cat > npm-pkg/lib/scute.h << 'HEADER'
-          #ifndef SCUTE_H
-          #define SCUTE_H
-
-          #include <stdint.h>
-
-          typedef struct ScuteHandle ScuteHandle;
-
-          ScuteHandle* scute_start(const char* config_json);
-          void scute_stop(ScuteHandle* handle);
-          char* scute_poll_event(ScuteHandle* handle);
-          void scute_free_string(char* ptr);
-
-          #endif
-          HEADER
-
-          echo "=== Package contents ==="
-          ls -lhR npm-pkg/
-
-      - name: Upload library artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: scute-${{ matrix.name }}
-          path: npm-pkg/
-          retention-days: 30
-
-  # ===========================================================================
-  # iOS static library (device + simulator)
-  # ===========================================================================
-  build-ios:
-    name: ios-arm64
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-scute-ios-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-scute-ios-
-
-      - name: Build iOS device (arm64)
-        run: cargo build --release --target aarch64-apple-ios -p freehold-scute --lib
-
-      - name: Build iOS simulator (arm64)
-        run: cargo build --release --target aarch64-apple-ios-sim -p freehold-scute --lib
-
-      - name: Package libraries
-        run: |
-          mkdir -p npm-pkg/lib/device npm-pkg/lib/simulator
-
-          # Copy static libs (Rust produces .a for iOS targets)
-          cp target/aarch64-apple-ios/release/libfreehold_scute.a npm-pkg/lib/device/ 2>/dev/null || true
-          cp target/aarch64-apple-ios-sim/release/libfreehold_scute.a npm-pkg/lib/simulator/ 2>/dev/null || true
-
-          # Generate C header
-          cat > npm-pkg/lib/scute.h << 'HEADER'
-          #ifndef SCUTE_H
-          #define SCUTE_H
-
-          #include <stdint.h>
-
-          typedef struct ScuteHandle ScuteHandle;
-
-          ScuteHandle* scute_start(const char* config_json);
-          void scute_stop(ScuteHandle* handle);
-          char* scute_poll_event(ScuteHandle* handle);
-          void scute_free_string(char* ptr);
-
-          #endif
-          HEADER
-
-          cat > npm-pkg/package.json << 'EOF'
-          {
-            "name": "@mac!/ios-arm64",
-            "version": "0.1.0",
-            "description": "Scute static library for iOS (device + simulator)",
-            "os": ["darwin"],
-            "cpu": ["arm64"],
-            "files": ["lib/"],
-            "license": "MIT",
-            "repository": {
-              "type": "git",
-              "url": "https://github.com/maceip/freehold"
-            }
-          }
-          EOF
-
-          echo "=== Package contents ==="
-          ls -lhR npm-pkg/
-
-      - name: Upload library artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: scute-ios-arm64
-          path: npm-pkg/
-          retention-days: 30
-
-  # ===========================================================================
-  # Publish to npm (on GitHub release or manual dispatch)
-  # ===========================================================================
-  publish-npm:
-    name: Publish to npm
-    runs-on: ubuntu-latest
-    needs: [build-desktop, build-android, build-ios]
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: List all artifacts
-        run: find artifacts/ -type f | sort
-
-      - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          PLATFORMS=(
-            "linux-x64"
-            "linux-arm64"
-            "linux-riscv64"
-            "darwin-x64"
-            "darwin-arm64"
-            "win32-x64"
-            "win32-arm64"
-            "android-arm64"
-            "android-arm"
-            "ios-arm64"
-          )
-
-          for platform in "${PLATFORMS[@]}"; do
-            dir="artifacts/scute-${platform}"
-            if [ -d "$dir" ]; then
-              echo "Publishing @mac!/${platform}..."
-              cd "$dir"
-              npm publish --provenance --access public || echo "Failed to publish @mac!/${platform}"
-              cd -
-            else
-              echo "Skipping @mac!/${platform} — artifact not found"
-            fi
-          done
-
-  # ===========================================================================
-  # Attestation
-  # ===========================================================================
-  attest:
-    name: Attest Binaries
-    runs-on: ubuntu-latest
-    needs: [build-desktop, build-android, build-ios]
-    permissions:
-      id-token: write
-      attestations: write
-      contents: read
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: Collect binaries for attestation
-        run: |
-          mkdir -p attest-binaries
-          find artifacts/ -type f \( -name "scute-service*" -o -name "libfreehold_scute*" \) -exec cp {} attest-binaries/ \;
-          # Rename to avoid collisions (same filename from different platforms)
-          cd attest-binaries
-          for f in *; do
-            parent=$(basename $(dirname $(find ../artifacts -name "$f" -print -quit 2>/dev/null || echo "unknown")))
-            if [ "$parent" != "." ] && [ "$parent" != "attest-binaries" ]; then
-              mv "$f" "${parent}-${f}" 2>/dev/null || true
-            fi
-          done
-          cd ..
-          echo "=== Binaries to attest ==="
-          ls -lh attest-binaries/
-
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: 'attest-binaries/*'
-        if: hashFiles('attest-binaries/*') != ''
-        continue-on-error: true
+          path: target/${{ matrix.target }}/release/${{ matrix.binary }}
+          retention-days: 7
