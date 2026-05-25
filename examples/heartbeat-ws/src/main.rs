@@ -145,11 +145,11 @@ async fn main() -> Result<()> {
                 relay_str, relay_port, h3_bind, ws_addr, args.dns_zone
             );
             info!("  Dual-path DNS will create:");
-            info!("    <hash>.{} — SVCB racing (relay + direct)", args.dns_zone);
             info!(
-                "    <hash>.relay.{} — explicit relay path",
+                "    <hash>.{} — SVCB racing (relay + direct)",
                 args.dns_zone
             );
+            info!("    <hash>.relay.{} — explicit relay path", args.dns_zone);
             info!(
                 "    <hash>.home.{} — explicit direct/home path",
                 args.dns_zone
@@ -184,8 +184,7 @@ async fn main() -> Result<()> {
 
         // Generate self-signed cert for initial startup
         // (ACME will hot-swap a real cert once DNS is ready)
-        let (certs, key) =
-            freehold_client_core::generate_self_signed_cert(&[&args.domain])?;
+        let (certs, key) = freehold_client_core::generate_self_signed_cert(&[&args.domain])?;
 
         let service = freehold_client_core::Service::new(
             freehold_client_core::ServiceConfig {
@@ -197,11 +196,7 @@ async fn main() -> Result<()> {
                 key,
                 auto_discover: true,
                 acme_cache_dir,
-                dns_zone: if has_acme {
-                    Some(args.dns_zone)
-                } else {
-                    None
-                },
+                dns_zone: if has_acme { Some(args.dns_zone) } else { None },
             },
             status_tx,
         )?;

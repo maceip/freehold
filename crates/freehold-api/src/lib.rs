@@ -484,19 +484,37 @@ mod tests {
     #[test]
     fn roundtrip_punch() {
         let addr = SocketAddr::new(Ipv4Addr::new(203, 0, 113, 42).into(), 12345);
-        let msg = Message::Punch { addr, spray_range: 0 };
+        let msg = Message::Punch {
+            addr,
+            spray_range: 0,
+        };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert_eq!(parsed, Message::Punch { addr, spray_range: 0 });
+        assert_eq!(
+            parsed,
+            Message::Punch {
+                addr,
+                spray_range: 0
+            }
+        );
     }
 
     #[test]
     fn roundtrip_punch_with_spray() {
         let addr = SocketAddr::new(Ipv4Addr::new(203, 0, 113, 42).into(), 12345);
-        let msg = Message::Punch { addr, spray_range: 10_000 };
+        let msg = Message::Punch {
+            addr,
+            spray_range: 10_000,
+        };
         let bytes = msg.to_bytes();
         let parsed = Message::parse(&bytes).unwrap();
-        assert_eq!(parsed, Message::Punch { addr, spray_range: 10_000 });
+        assert_eq!(
+            parsed,
+            Message::Punch {
+                addr,
+                spray_range: 10_000
+            }
+        );
     }
 
     #[test]
@@ -508,10 +526,19 @@ mod tests {
             SocketAddr::new(Ipv4Addr::new(10, 0, 0, 1).into(), 8080),
         ];
         for addr in addrs {
-            let msg = Message::Punch { addr, spray_range: 0 };
+            let msg = Message::Punch {
+                addr,
+                spray_range: 0,
+            };
             let bytes = msg.to_bytes();
             let parsed = Message::parse(&bytes).unwrap();
-            assert_eq!(parsed, Message::Punch { addr, spray_range: 0 });
+            assert_eq!(
+                parsed,
+                Message::Punch {
+                    addr,
+                    spray_range: 0
+                }
+            );
         }
     }
 
@@ -521,7 +548,13 @@ mod tests {
         let bytes = vec![MAGIC, 0x06, 192, 168, 1, 1, 0x1F, 0x90]; // 192.168.1.1:8080
         let parsed = Message::parse(&bytes).unwrap();
         let expected_addr = SocketAddr::new(Ipv4Addr::new(192, 168, 1, 1).into(), 8080);
-        assert_eq!(parsed, Message::Punch { addr: expected_addr, spray_range: 0 });
+        assert_eq!(
+            parsed,
+            Message::Punch {
+                addr: expected_addr,
+                spray_range: 0
+            }
+        );
     }
 
     #[test]

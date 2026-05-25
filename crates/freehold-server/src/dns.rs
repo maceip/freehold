@@ -199,29 +199,64 @@ impl DnsManager {
 
             // Primary domain: A fallback + two HTTPS records for SVCB racing
             mgr.knotc(&[
-                "zone-set", &mgr.zone, subdomain, "810", "A", &relay_ip.to_string(),
+                "zone-set",
+                &mgr.zone,
+                subdomain,
+                "810",
+                "A",
+                &relay_ip.to_string(),
             ])?;
             mgr.knotc(&[
-                "zone-set", &mgr.zone, subdomain, "810", "HTTPS", &relay_svcb,
+                "zone-set",
+                &mgr.zone,
+                subdomain,
+                "810",
+                "HTTPS",
+                &relay_svcb,
             ])?;
             mgr.knotc(&[
-                "zone-set", &mgr.zone, subdomain, "810", "HTTPS", &direct_svcb,
+                "zone-set",
+                &mgr.zone,
+                subdomain,
+                "810",
+                "HTTPS",
+                &direct_svcb,
             ])?;
 
             // Relay subdomain: A + HTTPS
             mgr.knotc(&[
-                "zone-set", &mgr.zone, &relay_name, "810", "A", &relay_ip.to_string(),
+                "zone-set",
+                &mgr.zone,
+                &relay_name,
+                "810",
+                "A",
+                &relay_ip.to_string(),
             ])?;
             mgr.knotc(&[
-                "zone-set", &mgr.zone, &relay_name, "810", "HTTPS", &relay_only_svcb,
+                "zone-set",
+                &mgr.zone,
+                &relay_name,
+                "810",
+                "HTTPS",
+                &relay_only_svcb,
             ])?;
 
             // Home subdomain: A + HTTPS
             mgr.knotc(&[
-                "zone-set", &mgr.zone, &home_name, "810", "A", &home_ip.to_string(),
+                "zone-set",
+                &mgr.zone,
+                &home_name,
+                "810",
+                "A",
+                &home_ip.to_string(),
             ])?;
             mgr.knotc(&[
-                "zone-set", &mgr.zone, &home_name, "810", "HTTPS", &home_only_svcb,
+                "zone-set",
+                &mgr.zone,
+                &home_name,
+                "810",
+                "HTTPS",
+                &home_only_svcb,
             ])?;
 
             debug!(

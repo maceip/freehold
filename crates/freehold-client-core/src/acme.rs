@@ -102,10 +102,8 @@ impl AcmeManager {
         let account = self.get_or_create_account().await?;
 
         // 2. Create new order with all identifiers
-        let identifiers: Vec<Identifier> = domains
-            .iter()
-            .map(|d| Identifier::Dns(d.clone()))
-            .collect();
+        let identifiers: Vec<Identifier> =
+            domains.iter().map(|d| Identifier::Dns(d.clone())).collect();
         let mut order = account
             .new_order(&NewOrder {
                 identifiers: &identifiers,
@@ -204,8 +202,7 @@ impl AcmeManager {
 
         // 9. Generate key and CSR with all SANs
         let key_pair = KeyPair::generate().context("generate key pair")?;
-        let csr_params =
-            CertificateParams::new(domains.to_vec()).context("CSR params")?;
+        let csr_params = CertificateParams::new(domains.to_vec()).context("CSR params")?;
         let csr = csr_params
             .serialize_request(&key_pair)
             .context("serialize CSR")?;

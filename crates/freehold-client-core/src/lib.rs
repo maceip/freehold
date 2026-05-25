@@ -645,7 +645,12 @@ impl Engine {
                         }
                         let count = (end - start + 1) as u64;
                         self.bytes_sent += count;
-                        debug!("NAT spray: {} ports around {}:{}", count, addr.ip(), base_port);
+                        debug!(
+                            "NAT spray: {} ports around {}:{}",
+                            count,
+                            addr.ip(),
+                            base_port
+                        );
                     } else {
                         if let Err(e) = self.socket.send_to(&[0x00], addr) {
                             warn!("NAT punch failed to {}: {}", addr, e);
@@ -793,7 +798,12 @@ impl Service {
 
             tokio::spawn(async move {
                 if let Err(e) = run_acme_task(
-                    cache_dir, dns_zone, cmd_tx, subdomain_rx, acme_endpoint, status_tx,
+                    cache_dir,
+                    dns_zone,
+                    cmd_tx,
+                    subdomain_rx,
+                    acme_endpoint,
+                    status_tx,
                 )
                 .await
                 {

@@ -226,9 +226,9 @@ pub trait MessageHandler {
                 if let Some(ref dns) = self.context().dns_manager {
                     if let Some(primary_ip) = self.context().primary_ip {
                         let (home_ip, home_port) = home_addr;
-                        if let Err(e) = dns.set_registration(
-                            &subdomain, primary_ip, port, home_ip, home_port,
-                        ) {
+                        if let Err(e) =
+                            dns.set_registration(&subdomain, primary_ip, port, home_ip, home_port)
+                        {
                             warn!("DNS registration failed for {}: {}", subdomain, e);
                             return Message::Error { port }.into();
                         }
