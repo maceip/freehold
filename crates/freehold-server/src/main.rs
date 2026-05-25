@@ -132,10 +132,7 @@ impl Server {
                 }
 
                 let now = ktime_get_ns();
-                let relay_ip_be = self
-                    .primary_ip
-                    .map(|ip| u32::from(ip).to_be())
-                    .unwrap_or(0);
+                let relay_ip_be = self.primary_ip.map(|ip| u32::from(ip).to_be()).unwrap_or(0);
                 let reg = Registration {
                     tokens: freehold_common::rate_limit::MAX_BURST,
                     last_refill: now,
@@ -426,22 +423,17 @@ async fn process_xdp_events(
                                             match regs.get(&relay_port, 0) {
                                                 Ok(mut reg) => {
                                                     let home_addr = SocketAddr::new(
-                                                        Ipv4Addr::from(
-                                                            u32::from_be(reg.home_ip),
-                                                        )
-                                                        .into(),
+                                                        Ipv4Addr::from(u32::from_be(reg.home_ip))
+                                                            .into(),
                                                         reg.home_port,
                                                     );
-                                                    let client_ip_be =
-                                                        u32::from(src_ip).to_be();
+                                                    let client_ip_be = u32::from(src_ip).to_be();
                                                     if reg.client_ip != client_ip_be
                                                         || reg.client_port != event.src_port
                                                     {
                                                         reg.client_ip = client_ip_be;
                                                         reg.client_port = event.src_port;
-                                                        let _ = regs.insert(
-                                                            relay_port, reg, 0,
-                                                        );
+                                                        let _ = regs.insert(relay_port, reg, 0);
                                                     }
                                                     Some(home_addr)
                                                 }
@@ -451,18 +443,13 @@ async fn process_xdp_events(
 
                                         // NAT hole-punch: send Punch to Bob for new sources
                                         if let Some(home_addr) = home_addr {
-                                            let key =
-                                                (src_ip, event.src_port, relay_port);
+                                            let key = (src_ip, event.src_port, relay_port);
                                             let now = Instant::now();
 
-                                            let is_new =
-                                                match punch_tracker.seen.get(&key) {
-                                                    None => true,
-                                                    Some(t) => {
-                                                        now.duration_since(*t)
-                                                            >= PUNCH_SEEN_TTL
-                                                    }
-                                                };
+                                            let is_new = match punch_tracker.seen.get(&key) {
+                                                None => true,
+                                                Some(t) => now.duration_since(*t) >= PUNCH_SEEN_TTL,
+                                            };
 
                                             if is_new {
                                                 punch_tracker.seen.insert(key, now);
@@ -475,10 +462,7 @@ async fn process_xdp_events(
                                                     spray_range: 10_000,
                                                 };
                                                 if let Err(e) = punch_socket
-                                                    .send_to(
-                                                        &punch_msg.to_bytes(),
-                                                        home_addr,
-                                                    )
+                                                    .send_to(&punch_msg.to_bytes(), home_addr)
                                                 {
                                                     warn!(
                                                         "Failed to send Punch to {}: {}",
@@ -487,20 +471,15 @@ async fn process_xdp_events(
                                                 } else {
                                                     debug!(
                                                         "Punch: sent {}:{} -> {}",
-                                                        src_ip,
-                                                        event.src_port,
-                                                        home_addr
+                                                        src_ip, event.src_port, home_addr
                                                     );
                                                 }
                                             }
 
                                             // Periodic prune of stale entries
-                                            if now.duration_since(last_prune)
-                                                >= PUNCH_SEEN_TTL
-                                            {
+                                            if now.duration_since(last_prune) >= PUNCH_SEEN_TTL {
                                                 punch_tracker.seen.retain(|_, t| {
-                                                    now.duration_since(*t)
-                                                        < PUNCH_SEEN_TTL
+                                                    now.duration_since(*t) < PUNCH_SEEN_TTL
                                                 });
                                                 last_prune = now;
                                             }
@@ -643,7 +622,13 @@ async fn main() -> Result<()> {
 
     let punch_socket = Arc::new(socket.try_clone().context("clone socket for punch")?);
 
-    process_xdp_events(perf_array, verbose_events, punch_socket, registrations.clone()).await;
+    process_xdp_events(
+        perf_array,
+        verbose_events,
+        punch_socket,
+        registrations.clone(),
+    )
+    .await;
 
     // Initialize DNS manager if enabled
     let dns_manager = if config.dns.enabled {
